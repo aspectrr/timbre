@@ -173,12 +173,12 @@ PAGE = r"""<!doctype html>
   <p class="sub">Train a model that writes like you. Upload your email, get a model you run locally — free, private, yours.</p>
 
   <div class="tabs">
-    <button class="tab active" data-tab="train">Train</button>
-    <button class="tab" data-tab="guide">Guide</button>
+    <button class="tab active" data-tab="guide">Guide</button>
+    <button class="tab" data-tab="train">Train</button>
   </div>
 
   <!-- ═══ TRAIN PANEL ═══ -->
-  <div class="panel active" id="train">
+  <div class="panel" id="train">
 
     <div class="card">
       <div class="field"><label>Your email addresses <span class="pill">used to find what YOU wrote</span></label>
@@ -220,7 +220,7 @@ PAGE = r"""<!doctype html>
   </div>
 
   <!-- ═══ GUIDE PANEL ═══ -->
-  <div class="panel" id="guide">
+  <div class="panel active" id="guide">
 
     <div class="toc">
       <a onclick="document.getElementById('g1').scrollIntoView({behavior:'smooth'})">1 · Get your email</a>
