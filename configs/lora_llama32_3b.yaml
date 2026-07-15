@@ -1,0 +1,39 @@
+# Phase 0 LoRA config — Collin's style clone on Llama 3.2 3B Instruct (MLX)
+# Goal: teach the model to WRITE in Collin's voice, not inject knowledge.
+# 4-bit base leaves headroom on M1 16GB for LoRA + activations.
+
+# Model: MLX-community pre-converted 4-bit Llama 3.2 3B Instruct
+model: "mlx-community/Llama-3.2-3B-Instruct-4bit"
+
+# Data: chat-format train/valid splits
+data: "./data/datasets/mlx"
+mask_prompt: true            # only train on assistant (Collin's) tokens
+
+# Method
+fine_tune_type: lora
+num_layers: 16               # 3B has 28 layers; LoRA the last 16
+
+# Training schedule
+train: true
+iters: 800                   # ~3.3 epochs (950 examples / batch 4 ≈ 238 steps/epoch)
+batch_size: 4
+learning_rate: 5e-5          # moderate for style LoRA; MLX default is 1e-5 (too tame)
+max_seq_length: 2048         # longest emails ~1250 tokens, 2048 is comfortable
+
+# Reporting / checkpointing
+steps_per_report: 10
+steps_per_eval: 100
+val_batches: 25
+save_every: 200              # checkpoint every ~0.8 epochs
+adapter_path: "./data/models/adapters"
+
+# LoRA hyperparameters
+lora_parameters:
+  keys: ["self_attn.q_proj", "self_attn.v_proj", "self_attn.k_proj", "self_attn.o_proj"]
+  rank: 16                   # higher rank = more style capacity (8 is default, 16 for voice)
+  scale: 32.0                # = 2 × rank (standard heuristic)
+  dropout: 0.05
+
+# Memory: keep off to fit batch 4 on 16GB; enable if we OOM at lower batch
+grad_checkpoint: false
+seed: 42
