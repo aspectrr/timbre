@@ -1,0 +1,9 @@
+# Unsloth cloud training deps. Pin nothing — let Unsloth resolve its stack.
+# Install order matters: unsloth first, it pins compatible versions of the rest.
+unsloth
+trl
+transformers
+datasets
+accelerate
+bitsandbytes
+torch

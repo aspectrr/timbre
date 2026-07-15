@@ -1,3 +1,32 @@
 # Pix Agent
 .pi/
 .pi-lens/
+
+# Data — contains PII (raw email, names, addresses). NEVER commit.
+# Raw exports (mbox, eml, etc.)
+data/raw/
+# Cleaned but still-identifiable text
+data/cleaned/
+# Synthesized training datasets (derived from real email)
+data/datasets/
+# Any trained weights / adapters
+data/models/
+checkpoints/
+*.gguf
+*.safetensors
+*.bin
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+
+# OS
+.DS_Store
+
+# uv / venv (keep uv.lock committed for reproducibility)
+.venv/
+.uv-cache/
