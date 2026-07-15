@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""End-to-end: train Llama 3.2 3B LoRA + clean 16-bit merge + GGUF export.
+"""End-to-end standalone: train Llama 3.2 3B LoRA → adapter GGUF for Ollama.
 
-Single Modal run. Two phases:
-  Phase 1: QLoRA training (4-bit) → save adapter
-  Phase 2: reload base+adapter in FULL 16-bit → clean merge → GGUF
+Single Modal run, three phases:
+  1. QLoRA training (4-bit) → save adapter
+  2. Reload base+adapter at FULL 16-bit → clean merge (provides the base
+     that convert_lora_to_gguf needs, and avoids the 4-bit dequant
+     corruption that produces garbage tokens)
+  3. convert_lora_to_gguf → adapter.gguf  (the Ollama-ready deliverable)
 
-The 16-bit reload is the key fix: Unsloth's merge of a 4-bit base produces
-corrupted weights (out-of-range token IDs). Loading at full precision
-sidesteps the lossy dequantization entirely.
+The adapter-import path (`FROM llama3.2:3b` + `ADAPTER ./adapter.gguf` in
+Ollama) sidesteps the Llama-3 vocab-padding mismatch that breaks a full
+merged GGUF in Ollama. Ollama applies our 97MB LoRA on its own clean base.
 
 Usage: uv run modal run scripts/modal_full_run.py
 """
@@ -15,7 +18,7 @@ from __future__ import annotations
 
 import modal
 
-# ── image: Unsloth (train + load) + llama.cpp (GGUF convert) ───────────────
+# ── image: Unsloth (train + load) + llama.cpp (adapter→GGUF) ───────────────
 _gpu_pkgs = ["unsloth", "peft", "transformers", "torch", "accelerate",
              "datasets", "trl", "bitsandbytes"]
 
@@ -46,7 +49,8 @@ MODEL = "unsloth/Llama-3.2-3B-Instruct"
               volumes={"/root/.cache/huggingface": hf_cache,
                        "/root/outputs": outputs})
 def run_all() -> dict:
-    import os, json, subprocess, torch
+    import gc, json, os, shutil, subprocess
+    import torch
     from unsloth import FastLanguageModel
     from unsloth.chat_templates import get_chat_template
     from datasets import Dataset
@@ -122,16 +126,15 @@ def run_all() -> dict:
     # Free GPU memory before reloading at full precision
     del model, trainer
     torch.cuda.empty_cache()
-    import gc; gc.collect()
-
+    gc.collect()
     outputs.commit()
     print("\nPhase 1 complete. Reloading for clean merge...")
 
     # ════════════════════════════════════════════════════════════════════
-    # PHASE 2: clean 16-bit merge + GGUF
+    # PHASE 2: clean 16-bit merge (base for the adapter conversion)
     # ════════════════════════════════════════════════════════════════════
     print("\n" + "=" * 70)
-    print("PHASE 2: 16-bit merge + GGUF export")
+    print("PHASE 2: 16-bit merge")
     print("=" * 70)
 
     # Reload base+adapter in FULL 16-bit (no 4-bit → no corruption)
@@ -141,13 +144,13 @@ def run_all() -> dict:
     print(f"  Vocab size: {model.config.vocab_size}")
 
     merged_dir = "/root/outputs/merged_clean"
+    if os.path.exists(merged_dir):  # clear leftovers (prevents dup-tensor error)
+        shutil.rmtree(merged_dir)
     print("Merging + saving (16-bit)...")
     model.save_pretrained_merged(merged_dir, tokenizer,
                                  save_method="merged_16bit")
-    print(f"  Saved to {merged_dir}")
 
     # Copy tokenizer files (save_pretrained_merged sometimes omits them)
-    import shutil
     for tf in ["tokenizer.json", "tokenizer.model", "tokenizer_config.json",
                "special_tokens_map.json"]:
         src, dst = os.path.join(adapter_dir, tf), os.path.join(merged_dir, tf)
@@ -155,29 +158,50 @@ def run_all() -> dict:
             shutil.copy2(src, dst)
             print(f"  Copied {tf}")
 
-    # Convert to GGUF
-    print("Converting to GGUF...")
-    bf16 = os.path.join(merged_dir, "model-bf16.gguf")
-    q4 = os.path.join(merged_dir, "model-Q4_K_M.gguf")
-    subprocess.run(["python", "/root/llama.cpp/convert_hf_to_gguf.py",
-                    merged_dir, "--outtype", "f16", "--outfile", bf16], check=True)
-    subprocess.run(["/root/llama.cpp/build/bin/llama-quantize", bf16, q4,
-                    "Q4_K_M"], check=True)
-    os.remove(bf16)
-    size_gb = os.path.getsize(q4) / 1e9
-    print(f"  Q4_K_M: {size_gb:.1f} GB")
+    del model, tokenizer
+    torch.cuda.empty_cache()
+    gc.collect()
+    outputs.commit()
+    print("\nPhase 2 complete. Converting adapter → GGUF...")
+
+    # ════════════════════════════════════════════════════════════════════
+    # PHASE 3: adapter → GGUF (the Ollama-ready deliverable)
+    # ════════════════════════════════════════════════════════════════════
+    print("\n" + "=" * 70)
+    print("PHASE 3: adapter → GGUF")
+    print("=" * 70)
+
+    adapter_gguf = "/root/outputs/adapter.gguf"
+    subprocess.run(["python", "/root/llama.cpp/convert_lora_to_gguf.py",
+                    adapter_dir, "--outfile", adapter_gguf,
+                    "--base", merged_dir], check=True)
+    size_mb = os.path.getsize(adapter_gguf) / 1e6
+    print(f"  adapter.gguf: {size_mb:.0f} MB")
+
+    # Modelfile for Ollama import
+    Path_modelfile = "/root/outputs/Modelfile"
+    with open(Path_modelfile, "w") as f:
+        f.write(
+            "FROM llama3.2:3b\n"
+            "ADAPTER ./adapter.gguf\n\n"
+            "PARAMETER temperature 0.7\n"
+            "PARAMETER top_p 0.9\n"
+            "PARAMETER repeat_penalty 1.15\n")
 
     outputs.commit()
-    return {"ok": True, "path": q4, "size_gb": size_gb}
+    return {"ok": True, "adapter_mb": round(size_mb, 1),
+            "adapter_path": adapter_gguf, "modelfile_path": Path_modelfile}
 
 
 @app.local_entrypoint()
 def main() -> None:
-    print("\n=== Llama 3.2 3B: full run (train + 16-bit merge + GGUF) ===\n")
+    print("\n=== Llama 3.2 3B: train + 16-bit merge + adapter GGUF ===\n")
     result = run_all.remote()
     print(f"\nResult: {result}")
     if result.get("ok"):
-        print(f"\n✓ Done! {result['size_gb']:.1f} GB GGUF at {result['path']}")
-        print(f"\nDownload with:")
-        print(f"  uv run modal volume get fine-tune-outputs"
-              f" /merged_clean/model-Q4_K_M.gguf data/models/")
+        print(f"\n✓ Done! {result['adapter_mb']:.0f} MB adapter GGUF")
+        print(f"\nDownload both files:")
+        print(f"  uv run modal volume get fine-tune-outputs /adapter.gguf data/models/")
+        print(f"  uv run modal volume get fine-tune-outputs /Modelfile data/models/")
+        print(f"\nThen run in Ollama:")
+        print(f"  cd data/models && ollama create my-style -f Modelfile && ollama run my-style")

@@ -1,7 +1,6 @@
 """GPU step: LoRA training + clean 16-bit merge + adapter→GGUF export.
 
-Proven path (see scripts/modal_full_run.py + modal_convert_clean.py +
-modal_convert_adapter.py):
+Proven path (see scripts/modal_full_run.py):
   1. QLoRA train (4-bit) → save adapter
   2. Reload adapter at FULL 16-bit → merge (clean weights, no 4-bit corruption)
   3. convert_lora_to_gguf → adapter.gguf (Ollama applies this on its own base)

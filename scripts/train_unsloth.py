@@ -7,7 +7,6 @@ base model, trains, and exports a GGUF for Ollama.
 
 Usage:
   python scripts/train_unsloth.py
-  MODEL=mistralai/Ministral-8B-Instruct-2410 python scripts/train_unsloth.py
 
 Requires (see requirements-unsloth.txt):
   pip install unsloth trl transformers datasets accelerate bitsandbytes
@@ -37,17 +36,8 @@ LORA_ALPHA = 32
 LORA_DROPOUT = 0.05
 EPOCHS = 3
 LR = 2e-5
-BATCH = 1          # 8B needs batch 1 on L4 (24GB) to avoid OOM
-GRAD_ACCUM = 8    # compensate with more accumulation (effective batch 8)
-
-# Map model family → chat template
-def template_for(model_name: str) -> str:
-    name = model_name.lower()
-    if "llama-3" in name:
-        return "llama-3.1"
-    if "ministral" in name or "magistral" in name or "mistral" in name:
-        return "mistral"
-    return "chatml"
+BATCH = 2          # Llama 3.2 3B fits batch 2 on an L4 (24GB)
+GRAD_ACCUM = 4    # effective batch 8
 
 
 def load_split(path: Path) -> Dataset:
@@ -57,9 +47,7 @@ def load_split(path: Path) -> Dataset:
 
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    template = template_for(MODEL)
     print(f"Model:     {MODEL}")
-    print(f"Template:  {template}")
     print(f"Data dir:  {DATA_DIR}")
 
     # 1. Load model + tokenizer (4-bit QLoRA)
@@ -70,10 +58,10 @@ def main() -> None:
         load_in_4bit=True,
     )
 
-    # 2. Apply chat template (works with our {"messages":[...]} format)
+    # 2. Apply Llama 3 chat template (works with our {"messages":[...]} format)
     tokenizer = get_chat_template(
         tokenizer,
-        chat_template=template,
+        chat_template="llama-3.1",
         mapping={"role": "from", "content": "value",
                  "user": "human", "assistant": "gpt"},
         map_eos_token=True,
@@ -131,8 +119,8 @@ def main() -> None:
             seed=42,
             output_dir=str(OUT_DIR / "checkpoints"),
             eval_strategy="steps",
-            eval_steps=100,
-            save_steps=400,
+            eval_steps=50,
+            save_steps=999999,
         ),
     )
     trainer.train()
@@ -143,13 +131,13 @@ def main() -> None:
     tokenizer.save_pretrained(str(adapter_dir))
     print(f"LoRA adapter saved: {adapter_dir}")
 
-    # Save merged 16-bit model (base + LoRA fused) for llama.cpp GGUF conversion.
-    # We do NOT use Unsloth's save_pretrained_gguf here — its bundled llama.cpp
-    # build is stale and fails in containers. We convert separately.
+    # Save merged 16-bit model: the base that convert_lora_to_gguf needs.
+    # (Loading at full precision here — not 4-bit — avoids the dequant
+    # corruption that produces garbage tokens. See modal_full_run.py.)
     merged_dir = OUT_DIR / "merged"
     model.save_pretrained_merged(str(merged_dir), tokenizer, save_method="merged_16bit")
     print(f"Merged 16-bit model saved: {merged_dir}")
-    print("\nDone. Convert to GGUF with scripts/modal_fix_gguf.py or modal_convert.py.")
+    print("\nDone. Convert the adapter to GGUF with scripts/modal_convert_adapter.py.")
 
 
 if __name__ == "__main__":
