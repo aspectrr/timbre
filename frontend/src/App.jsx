@@ -1,6 +1,9 @@
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import Guide from "./Guide.jsx";
 import { createJob, getStatus, resumeJob, downloadUrl } from "./api.js";
+
+// ponytail: one-slot localStorage — fine until a user needs a job history list.
+const JOB_KEY = "styleclone:job_id";
 
 const STAGES = ["ingesting", "curating", "synthesizing", "training", "exporting", "done"];
 const LABELS = {
@@ -10,21 +13,25 @@ const LABELS = {
 };
 
 export default function App() {
-  const [tab, setTab] = createSignal("guide");
   const [author, setAuthor] = createSignal("");
   const [synth, setSynth] = createSignal("anthropic/claude-opus-4.8");
   const [files, setFiles] = createSignal([]);
   const [dragging, setDragging] = createSignal(false);
 
-  const [jobId, setJobId] = createSignal(null);
+  const savedId = localStorage.getItem(JOB_KEY);
+  const [tab, setTab] = createSignal(savedId ? "train" : "guide");
+  const [jobId, setJobId] = createSignal(savedId);
   const [status, setStatus] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
   let pollTimer;
 
-  const onPick = (e) => setFiles([...e.target.files]);
+  onMount(() => { if (jobId()) poll(jobId()); });
+
+  // append — a second pick/drop adds to the list, doesn't wipe the first.
+  const onPick = (e) => setFiles((p) => [...p, ...e.target.files]);
   const onDrop = (e) => {
     e.preventDefault(); setDragging(false);
-    setFiles([...e.target.files]);
+    setFiles((p) => [...p, ...e.dataTransfer.files]);
   };
 
   const submit = async () => {
@@ -33,6 +40,7 @@ export default function App() {
     const j = await createJob(author(), synth(), files());
     setBusy(false);
     if (j.error) { alert(j.error); return; }
+    localStorage.setItem(JOB_KEY, j.job_id);
     setJobId(j.job_id);
     setTab("train");
     poll(j.job_id);
@@ -41,6 +49,13 @@ export default function App() {
   const poll = (id) => {
     clearTimeout(pollTimer);
     getStatus(id).then((s) => {
+      // 404 / purged job → drop the stale id so the form isn't stuck polling.
+      if (!s || !s.stage) {
+        localStorage.removeItem(JOB_KEY);
+        setJobId(null);
+        setStatus(null);
+        return;
+      }
       setStatus(s);
       if (s.stage !== "done" && s.stage !== "error") {
         pollTimer = setTimeout(() => poll(id), 2000);
@@ -133,7 +148,11 @@ export default function App() {
                 accept=".mbox,.eml,.txt,.md" onChange={onPick} />
             </div>
             <div class="flist">
-              {files().map((f) => <span>{f.name}</span>)}
+              {files().map((f, i) => (
+                <span>{f.name}
+                  <button type="button" class="x" aria-label={`remove ${f.name}`} onClick={() => setFiles((p) => p.filter((_, j) => j !== i))}>×</button>
+                </span>
+              ))}
             </div>
           </div>
           <button disabled={busy()} onClick={submit}>
