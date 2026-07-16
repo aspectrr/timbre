@@ -54,6 +54,22 @@ a:hover { color: var(--ink); }
 }
 .topnav .menu { cursor: pointer; }
 
+/* ── brand: voice-contour mark + wordmark ── */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+.brand svg { width: 19px; height: 19px; flex: none; display: block; }
+.brand .wm {
+  font-family: var(--font-nhm);
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: -0.5px;
+  line-height: 1;
+}
+
 /* ── hero: giant display headline ── */
 .hero {
   padding: 0 0 112px;

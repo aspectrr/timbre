@@ -72,7 +72,15 @@ export default function App() {
   return (
     <div class="wrap">
       <nav class="topnav">
-        <span>Style Clone</span>
+        <span class="brand" onClick={() => setTab("guide")}>
+          <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <rect x="0" y="13" width="3" height="7" />
+            <rect x="5.7" y="6" width="3" height="14" />
+            <rect x="11.3" y="9" width="3" height="11" />
+            <rect x="17" y="14" width="3" height="6" />
+          </svg>
+          <span class="wm">TIMBRE</span>
+        </span>
         <span class="menu" onClick={() => setTab(tab() === "guide" ? "train" : "guide")}>
           {tab() === "guide" ? "Train →" : "← Guide"}
         </span>
