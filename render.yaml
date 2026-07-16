@@ -1,0 +1,20 @@
+# Render Blueprint — Style Clone frontend (static site).
+#
+# Create a new static site in Render pointed at this repo, root directory
+# `frontend/`, build command `npm install && VITE_API_URL=$API_URL npm run build`,
+# publish directory `dist/`. Set the env var API_URL to the Fly backend.
+# Alternatively, Render auto-detects this render.yaml on connect.
+
+services:
+  - type: web
+    name: style-clone-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && VITE_API_URL=$API_URL npm run build
+    publishDir: dist
+    envVars:
+      - key: API_URL
+        value: https://style-clone-backend.fly.dev
+    routes:
+      - src: /.*
+        dest: /index.html

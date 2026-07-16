@@ -1,0 +1,11 @@
+[project]
+name = "style-clone-gpu"
+version = "0.1.0"
+description = "Style Clone GPU: stateless Modal training app"
+requires-python = ">=3.11,<3.13"
+# Only modal is needed to define/deploy the app. The CUDA training stack
+# (unsloth, torch, trl, bitsandbytes) is installed inside the Modal image,
+# not locally — it never builds on macOS.
+dependencies = [
+    "modal>=1.5",
+]
