@@ -135,7 +135,11 @@ def train_and_export(job_id: str) -> dict:
             ),
             callbacks=[_ProgressCB()],
         )
-        trainer.train(resume_from_checkpoint=True)
+        # Only resume if a checkpoint actually exists. resume_from_checkpoint=True
+        # raises ValueError when output_dir has no checkpoint (fresh run, or a
+        # crash before the first save at SAVE_STEPS).
+        has_ckpt = ckpt_dir.exists() and any(ckpt_dir.glob("checkpoint-*"))
+        trainer.train(resume_from_checkpoint=True if has_ckpt else None)
         eval_loss = trainer.evaluate().get("eval_loss")
 
         model.save_pretrained(str(adapter_dir))
