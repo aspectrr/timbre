@@ -103,7 +103,7 @@ export default function App() {
           <div class="field">
             <label>Your email addresses</label>
             <textarea value={author()} onInput={(e) => setAuthor(e.target.value)}
-              placeholder="cpfeifer@madcactus.org, collinpfeifer@icloud.com" />
+              placeholder="youremailaddress1@gmail.com, youremail2@icloud.com" />
           </div>
           <div class="field">
             <label>Teacher model</label>

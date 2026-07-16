@@ -27,6 +27,15 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ── links: gray, underlined (monochrome — never blue) ── */
+a {
+  color: #76716a;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+a:hover { color: var(--ink); }
+
 /* ── layout: generous editorial whitespace ── */
 .wrap {
   max-width: 1400px;
