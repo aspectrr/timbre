@@ -1,0 +1,32 @@
+# Fly.io config for the Style Clone backend (FastAPI + DBOS + SQLite).
+# Deploy: cd backend && fly deploy
+#
+# Requires (one-time):
+#   fly volumes create styleclone_data --region iad --size 1
+#   fly secrets set OPENROUTER_API_KEY=...
+#   fly secrets set MODAL_TOKEN_ID=... MODAL_TOKEN_SECRET=...
+#   fly secrets set CORS_ORIGIN=https://your-frontend.onrender.com
+
+app = "style-clone-backend"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8000
+  auto_stop_machines = true
+  auto_start_machines = true
+  # min_machines_running = 1  # set to 1 if long jobs pause on scale-to-zero
+
+[http_service.concurrency]
+  type = "requests"
+  hard_limit = 50
+  soft_limit = 25
+
+[[vm]]
+  memory = 1024  # MB; synthesis threadpool + buffers fit in 1GB
+
+[mounts]
+  source = "styleclone_data"
+  destination = "/data"
