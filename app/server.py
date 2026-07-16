@@ -63,6 +63,25 @@ def create_app() -> FastAPI:
             return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse(st)
 
+    @web.post("/api/jobs/{job_id}/resume")
+    def resume(job_id: str) -> JSONResponse:
+        st = get_status(job_id)
+        if not st:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        if st.get("stage") == "done":
+            return JSONResponse({"ok": True, "message": "already done"})
+        # Idempotent: run_job skips finished stages and resumes training from
+        # its last checkpoint, so this is safe for any non-terminal/errored job.
+        # NOTE: we do NOT write status here — run_job is the sole status writer.
+        # A competing write would race with run_job's first write on the
+        # eventually-consistent Dict and could clobber it, leaving the job
+        # stuck at "queued". The client flips to a local "retrying…" state
+        # and keeps polling; run_job's status lands within seconds.
+        run_job.spawn(job_id, st.get("author") or [],
+                      st.get("synth_model") or "google/gemini-2.5-flash",
+                      st.get("base_model") or "llama3.2-3b")
+        return JSONResponse({"ok": True})
+
     @web.get("/api/jobs/{job_id}/download/{which}")
     def download(job_id: str, which: str) -> Response:
         if which not in ("adapter.gguf", "Modelfile"):
@@ -215,6 +234,7 @@ PAGE = r"""<!doctype html>
         <a id="dl-mod" download>&#11015; Modelfile</a>
       </div>
       <div class="errbox hide" id="errbox"></div>
+      <button class="hide" id="retry" style="margin-top:12px;background:#232831;border:1px solid var(--bd)">Retry job</button>
     </div>
 
   </div>
@@ -366,6 +386,14 @@ drop.ondrop=e=>{e.preventDefault();drop.classList.remove("over");
   file.files=e.dataTransfer.files;renderFiles();};
 
 /* ── submit + poll ── */
+$("retry").onclick=async()=>{
+  if(!window._jid)return;
+  $("retry").disabled=true;$("retry").textContent="Retrying…";
+  await fetch(`/api/jobs/${window._jid}/resume`,{method:"POST"});
+  $("retry").disabled=false;$("retry").textContent="Retry job";
+  $("errbox").classList.add("hide");
+  poll(window._jid);
+};
 $("go").onclick=async()=>{
   if(!file.files.length){alert("Choose at least one file.");return;}
   const fd=new FormData();
@@ -379,6 +407,7 @@ $("go").onclick=async()=>{
   $("go").disabled=false;$("go").textContent="Train my style model";
   if(j.error){alert(j.error);return;}
   $("jobcard").classList.remove("hide");
+  window._jid=j.job_id;
   poll(j.job_id);
 };
 function poll(id){
@@ -408,6 +437,7 @@ function render(id,s){
     $("dl-mod").href=`/api/jobs/${id}/download/Modelfile`;
     $("msg").innerHTML=`&#10003; Ready! Save <b>both</b> files in one folder, then follow <a onclick="showTab('guide');document.getElementById('g3').scrollIntoView()">step 3 of the guide</a>.`;
   }
+  $("retry").classList.toggle("hide",cur!=="error");
   if(cur==="error"){$("errbox").classList.remove("hide");
     $("errbox").textContent=s.error||s.message||"Unknown error";}
 }

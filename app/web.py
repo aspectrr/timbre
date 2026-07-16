@@ -13,6 +13,7 @@ import modal
 from .common import app, web_image, jobs_vol, DATA_VOL
 from .orchestrator import run_job   # noqa: registers run_job in the deployed app
 from .gpu import train_and_export   # noqa: registers train_and_export in the deployed app
+from .watchdog import watchdog      # noqa: registers the periodic watchdog schedule
 
 
 @app.function(image=web_image, volumes={DATA_VOL: jobs_vol})
