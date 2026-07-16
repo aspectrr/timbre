@@ -1,0 +1,14 @@
+[project]
+name = "style-clone-backend"
+version = "0.1.0"
+description = "Style Clone backend: FastAPI + DBOS durable pipeline over SQLite"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+    "dbos>=2.27",
+    "modal>=1.5",
+]
+# No [build-system]: this is an application, not a library. uv manages the
+# venv and the package is found on the working directory at runtime.

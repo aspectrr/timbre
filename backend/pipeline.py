@@ -23,10 +23,10 @@ from pathlib import Path
 
 from dbos import DBOS
 
-from . import status
-from .ingest import ingest
-from .curate import curate
-from .synth import synthesize, write_chat_splits
+import status
+from ingest import ingest
+from curate import curate
+from synth import synthesize, write_chat_splits
 
 DATA = Path("/data")
 
@@ -188,6 +188,6 @@ def clone_style(job_id: str, author: list[str], synth_model: str) -> None:
 def start_job(job_id: str, author: list[str], synth_model: str) -> None:
     """Start the workflow in the background (durable: survives restart).
     DBOS auto-recovers pending workflows on process restart."""
-    from . import status as _st
+    import status as _st
     handle = DBOS.start_workflow(clone_style, job_id, author, synth_model)
     _st.update_job(job_id, workflow_id=handle.workflow_id)

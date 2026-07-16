@@ -11,11 +11,14 @@ frontend polls. Both live in the same SQLite file on the Fly volume.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
 
-DB_PATH = Path("/data/styleclone.db")
+# Configurable: /data on Fly (persistent volume), override for local dev.
+DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
+DB_PATH = DATA_DIR / "styleclone.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (

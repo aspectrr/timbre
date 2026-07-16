@@ -28,89 +28,103 @@ export default function Guide() {
   return (
     <div>
       <div class="toc">
-        <a href="#g1">1 · Get your email</a>
-        <a href="#g2">2 · Train</a>
-        <a href="#g3">3 · Use your model</a>
+        <a href="#g1">01 · Source</a>
+        <a href="#g2">02 · Train</a>
+        <a href="#g3">03 · Run</a>
       </div>
 
-      <div class="card" id="g1">
-        <h2>1 · Get your email as a file</h2>
-        <p style={{ color: "var(--mut)", margin: "0 0 6px" }}>
-          This app learns from emails <b style={{ color: "var(--ink)" }}>you</b> wrote.
-          Export your "Sent" mail into a file (called an mbox) and upload it. Nothing is
-          deleted from your account — exporting just makes a copy.
+      {/* ── 01 · GET YOUR EMAIL ── */}
+      <section id="g1" style={{ "padding-top": "0" }}>
+        <p class="label">Step One</p>
+        <h2 class="section-title">Source your writing</h2>
+        <p class="body-text">
+          This app learns from emails <b>you</b> wrote. Export your Sent mail into a
+          file (an mbox) and upload it. Exporting is a copy — nothing is deleted from
+          your account.
         </p>
 
-        <details open>
-          <summary>Gmail — via Google Takeout <span class="pill">easiest</span></summary>
-          <div class="inner">
-            <ol class="steps">
-              <li>Go to <a href="https://takeout.google.com" target="_blank">takeout.google.com</a> and sign in.</li>
-              <li>Click <b>"Deselect all"</b> at the top of the product list.</li>
-              <li>Scroll to <b>Mail</b> and tick its checkbox.</li>
-              <li>Click <b>"All Mail data included"</b> → untick "All Mail" → tick just <b>"Sent"</b>.</li>
-              <li>Scroll to the bottom → <b>"Next step"</b>.</li>
-              <li>Leave it as <b>"Send download link via email"</b>, <b>"Export once"</b>, <b>.zip</b> → click <b>"Create export"</b>.</li>
-              <li>Wait for Google's email (minutes to hours). Download the <code>.zip</code>.</li>
-              <li>Unzip it. Inside you'll find <code>Sent.mbox</code>.</li>
-              <li>Upload that <code>.mbox</code> file here.</li>
-            </ol>
-            <div class="note">Exporting is a copy — your Gmail account, labels, and messages are untouched.</div>
-          </div>
-        </details>
+        <div style={{ "margin-top": "48px" }}>
+          <details open>
+            <summary>Gmail — Google Takeout</summary>
+            <div class="inner">
+              <ol class="steps">
+                <li>Go to <a href="https://takeout.google.com" target="_blank">takeout.google.com</a> and sign in.</li>
+                <li>Click <b>"Deselect all"</b> at the top of the product list.</li>
+                <li>Scroll to <b>Mail</b> and tick its checkbox.</li>
+                <li>Click <b>"All Mail data included"</b> → untick "All Mail" → tick just <b>"Sent"</b>.</li>
+                <li>Scroll to the bottom → <b>"Next step"</b>.</li>
+                <li>Leave it as <b>"Send download link via email"</b>, <b>"Export once"</b>, <b>.zip</b> → <b>"Create export"</b>.</li>
+                <li>Wait for Google's email (minutes to hours). Download the <code>.zip</code>.</li>
+                <li>Unzip it. Inside you'll find <code>Sent.mbox</code>.</li>
+                <li>Upload that <code>.mbox</code> here.</li>
+              </ol>
+              <p class="note">A copy — your Gmail account, labels, and messages are untouched.</p>
+            </div>
+          </details>
 
-        <details>
-          <summary>iCloud — via Thunderbird</summary>
-          <div class="inner">
-            <p style={{ color: "var(--mut)" }}>iCloud has no "download your mail" button, so we use the free Thunderbird app.</p>
-            <ol class="steps">
-              <li>Install <a href="https://www.thunderbird.net" target="_blank">Thunderbird</a> (free).</li>
-              <li>Make an <b>app-specific password</b>: <a href="https://account.apple.com" target="_blank">account.apple.com</a> → App-Specific Passwords → generate one labeled "Thunderbird". Copy it.</li>
-              <li>Open Thunderbird → add your mail account. Enter your name, full <code>@icloud.com</code> address, and the <b>app-specific password</b>.</li>
-              <li>If it asks for server settings: <b>IMAP</b> <code>imap.mail.me.com</code>, <b>port</b> 993, <b>SSL</b> on.</li>
-              <li>Let folders sync (can take a while).</li>
-              <li>Install the <b>ImportExportTools NG</b> add-on (Add-ons and Themes → search → Add).</li>
-              <li>Right-click <b>Sent</b> → ImportExportTools NG → <b>Export folder</b> → save.</li>
-              <li>Upload the <code>.mbox</code> here.</li>
-            </ol>
-          </div>
-        </details>
+          <details>
+            <summary>iCloud — via Thunderbird</summary>
+            <div class="inner">
+              <p class="body-text">iCloud has no "download your mail" button, so we use the free Thunderbird app.</p>
+              <ol class="steps">
+                <li>Install <a href="https://www.thunderbird.net" target="_blank">Thunderbird</a> (free).</li>
+                <li>Make an <b>app-specific password</b>: <a href="https://account.apple.com" target="_blank">account.apple.com</a> → App-Specific Passwords → generate one labeled "Thunderbird". Copy it.</li>
+                <li>Open Thunderbird → add your mail account. Enter your name, full <code>@icloud.com</code> address, and the <b>app-specific password</b>.</li>
+                <li>If it asks for server settings: <b>IMAP</b> <code>imap.mail.me.com</code>, <b>port</b> 993, <b>SSL</b> on.</li>
+                <li>Let folders sync (can take a while).</li>
+                <li>Install <b>ImportExportTools NG</b> (Add-ons → search → Add).</li>
+                <li>Right-click <b>Sent</b> → ImportExportTools NG → <b>Export folder</b> → save.</li>
+                <li>Upload the <code>.mbox</code> here.</li>
+              </ol>
+            </div>
+          </details>
 
-        <details>
-          <summary>Outlook, Yahoo, or other IMAP — via Thunderbird</summary>
-          <div class="inner">
-            <ol class="steps">
-              <li>Install <a href="https://www.thunderbird.net" target="_blank">Thunderbird</a> (free).</li>
-              <li>Most providers require an <b>app password</b> now. Generate one in your provider's security settings.</li>
-              <li>Add your account in Thunderbird using that app password.</li>
-              <li>Install <b>ImportExportTools NG</b>, right-click <b>Sent</b> → Export folder → save the <code>.mbox</code>.</li>
-              <li>Upload the <code>.mbox</code> here.</li>
-            </ol>
-          </div>
-        </details>
+          <details>
+            <summary>Outlook, Yahoo, or other IMAP</summary>
+            <div class="inner">
+              <ol class="steps">
+                <li>Install <a href="https://www.thunderbird.net" target="_blank">Thunderbird</a> (free).</li>
+                <li>Most providers require an <b>app password</b> now. Generate one in your provider's security settings.</li>
+                <li>Add your account in Thunderbird using that app password.</li>
+                <li>Install <b>ImportExportTools NG</b>, right-click <b>Sent</b> → Export folder → save the <code>.mbox</code>.</li>
+                <li>Upload the <code>.mbox</code> here.</li>
+              </ol>
+            </div>
+          </details>
 
-        <details>
-          <summary>What about notes, docs, or other writing?</summary>
-          <div class="inner">
-            <p style={{ color: "var(--mut)" }}>Save them as <code>.txt</code> or <code>.md</code> and upload those. Each file becomes a writing sample. Good sources: sent email, personal notes, blog posts, Slack exports. Aim for 50–100+ messages for a recognizable style.</p>
-          </div>
-        </details>
-      </div>
+          <details>
+            <summary>Notes, docs, or other writing</summary>
+            <div class="inner">
+              <p class="body-text">
+                Save them as <code>.txt</code> or <code>.md</code> and upload those. Each file becomes a writing
+                sample. Good sources: sent email, personal notes, blog posts, Slack exports. Aim for 50–100+
+                messages for a recognizable style.
+              </p>
+            </div>
+          </details>
+        </div>
+      </section>
 
-      <div class="card" id="g2">
-        <h2>2 · Train your model</h2>
+      {/* ── 02 · TRAIN ── */}
+      <section id="g2">
+        <p class="label">Step Two</p>
+        <h2 class="section-title">Train your model</h2>
         <ol class="steps">
           <li>Enter the email address <b>you send from</b>.</li>
-          <li>Pick a teacher model — <span class="acc">Claude Opus</span> gives the best result; Flash is cheaper.</li>
+          <li>Pick a teacher model — <b>Opus</b> gives the best result; <b>Flash</b> is cheaper.</li>
           <li>Upload your file(s).</li>
-          <li>Click <b>Train my style model</b>.</li>
+          <li>Click <b>Train</b>.</li>
         </ol>
-        <div class="note">Takes about 15 minutes. You'll see live progress. Come back anytime — the job is durable and resumes on its own.</div>
-      </div>
+        <p class="note">Takes about 15 minutes. You'll see live progress. Come back anytime — the job is durable and resumes on its own.</p>
+      </section>
 
-      <div class="card" id="g3">
-        <h2>3 · Run your model on your computer</h2>
-        <p style={{ color: "var(--mut)", margin: "0 0 8px" }}>When training finishes, download <b>both</b> files: <code>adapter.gguf</code> and <code>Modelfile</code>. Then:</p>
+      {/* ── 03 · RUN ── */}
+      <section id="g3">
+        <p class="label">Step Three</p>
+        <h2 class="section-title">Run it locally</h2>
+        <p class="body-text">
+          When training finishes, download <b>both</b> files: <code>adapter.gguf</code> and <code>Modelfile</code>.
+        </p>
         <ol class="steps">
           <li>Install <a href="https://ollama.com" target="_blank">Ollama</a> (free).</li>
           <li>Open <b>Terminal</b> (Mac: Cmd + Space → "Terminal").</li>
@@ -127,7 +141,7 @@ export default function Guide() {
           </li>
           <li>Type a request — e.g. <i>"write a quick follow-up to a client who hasn't replied"</i> — and it writes in your voice.</li>
         </ol>
-      </div>
+      </section>
     </div>
   );
 }

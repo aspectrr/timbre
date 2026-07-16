@@ -17,18 +17,20 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
-from . import status
-from . import pipeline  # noqa: registers @DBOS.step / @DBOS.workflow
-from .pipeline import start_job
+import status
+import pipeline  # noqa: registers @DBOS.step / @DBOS.workflow
+from pipeline import start_job
 
-DATA = Path("/data")
+DATA = Path(os.environ.get("DATA_DIR", "/data"))
 
 
 def _setup_dbos() -> None:
     cfg: DBOSConfig = {
         "name": "style-clone",
         # SQLite on the persistent Fly volume (NOT cwd, which is ephemeral).
-        "system_database_url": "sqlite:////data/dbos.sqlite",
+        # Override via DBOS_DB for local dev.
+        "system_database_url": os.environ.get(
+            "DBOS_DB", f"sqlite:///{os.environ.get('DATA_DIR', '/data')}/dbos.sqlite"),
         "use_listen_notify": False,  # required for SQLite
     }
     DBOS(config=cfg)

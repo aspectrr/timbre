@@ -71,8 +71,20 @@ export default function App() {
 
   return (
     <div class="wrap">
-      <h1>Style Clone</h1>
-      <p class="sub">Train a model that writes like you. Upload your email, get a model you run locally.</p>
+      <nav class="topnav">
+        <span>Style Clone</span>
+        <span class="menu" onClick={() => setTab(tab() === "guide" ? "train" : "guide")}>
+          {tab() === "guide" ? "Train →" : "← Guide"}
+        </span>
+      </nav>
+
+      <header class="hero">
+        <h1>Write<br />like you.</h1>
+        <p class="lede">
+          Train a model on your own sent email. Get a file you run locally —
+          free, private, yours. No data leaves your machine after download.
+        </p>
+      </header>
 
       <div class="tabs">
         <button class={`tab ${tab() === "guide" ? "active" : ""}`} onClick={() => setTab("guide")}>Guide</button>
@@ -84,18 +96,21 @@ export default function App() {
       </Show>
 
       <Show when={tab() === "train"}>
-        <div class="card">
+        <section style={{ "padding-top": "0" }}>
+          <p class="label">Train</p>
+          <h2 class="section-title">New job</h2>
+
           <div class="field">
-            <label>Your email addresses <span class="pill">used to find what YOU wrote</span></label>
+            <label>Your email addresses</label>
             <textarea value={author()} onInput={(e) => setAuthor(e.target.value)}
               placeholder="cpfeifer@madcactus.org, collinpfeifer@icloud.com" />
           </div>
           <div class="field">
             <label>Teacher model</label>
             <select value={synth()} onChange={(e) => setSynth(e.target.value)}>
-              <option value="anthropic/claude-opus-4.8">Claude Opus (best quality)</option>
-              <option value="anthropic/claude-sonnet-4">Claude Sonnet (balanced)</option>
-              <option value="google/gemini-2.5-flash">Gemini Flash (cheapest)</option>
+              <option value="anthropic/claude-opus-4.8">Claude Opus — best quality</option>
+              <option value="anthropic/claude-sonnet-4">Claude Sonnet — balanced</option>
+              <option value="google/gemini-2.5-flash">Gemini Flash — cheapest</option>
             </select>
           </div>
           <div class="field">
@@ -114,12 +129,13 @@ export default function App() {
             </div>
           </div>
           <button disabled={busy()} onClick={submit}>
-            {busy() ? "Starting job…" : "Train my style model"}
+            {busy() ? "Starting" : "Train →"}
           </button>
-        </div>
+        </section>
 
         <Show when={jobId()}>
-          <div class="card">
+          <section>
+            <p class="label">Progress</p>
             <div class="stepper">
               {STAGES.map((name, i) => {
                 let cls = "";
@@ -134,18 +150,18 @@ export default function App() {
 
             <Show when={cur() === "done"}>
               <div class="dl">
-                <a class="gguf" href={downloadUrl(jobId(), "adapter.gguf")} download>⬇ adapter.gguf</a>
-                <a href={downloadUrl(jobId(), "Modelfile")} download>⬇ Modelfile</a>
+                <a href={downloadUrl(jobId(), "adapter.gguf")} download>↓ adapter.gguf</a>
+                <a href={downloadUrl(jobId(), "Modelfile")} download>↓ Modelfile</a>
               </div>
             </Show>
 
             <Show when={cur() === "error"}>
               <div class="errbox">{st().error || st().message || "Unknown error"}</div>
-              <button onClick={retry} style={{ "margin-top": "12px", background: "#232831", border: "1px solid var(--bd)" }}>
-                Retry job
-              </button>
+              <div style={{ "margin-top": "32px" }}>
+                <button onClick={retry}>Retry →</button>
+              </div>
             </Show>
-          </div>
+          </section>
         </Show>
       </Show>
     </div>
