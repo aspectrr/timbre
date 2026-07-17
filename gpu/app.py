@@ -53,7 +53,17 @@ def _load_split(rows_text: str):
 
 @app.function(image=gpu_image, gpu="l4", timeout=60 * 60,
               volumes={"/root/.cache/huggingface": hf_cache})
-def train_and_export(train_jsonl: str, valid_jsonl: str, job_id: str = "") -> dict:
+def train_and_export(train_jsonl: str, valid_jsonl: str, job_id: str = ""):
+    """Generator: yields live training events, then the final result.
+
+    Events: {"type":"phase"}, {"type":"log"}, {"type":"eval"},
+            {"type":"result"} (last), or {"type":"error"}.
+    Training runs on a worker thread; a TrainerCallback pushes events onto a
+    queue that this generator drains, so step/loss stream to the caller as they
+    happen instead of returning once at the end."""
+    import gc
+    import queue
+    import threading
     from unsloth import FastLanguageModel
     from unsloth.chat_templates import get_chat_template
     from trl import SFTTrainer
@@ -65,11 +75,14 @@ def train_and_export(train_jsonl: str, valid_jsonl: str, job_id: str = "") -> di
     adapter_dir = work / "adapter"
     merged_dir = work / "merged"
     adapter_gguf = work / "adapter.gguf"
-    (data_dir).mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "train.jsonl").write_text(train_jsonl)
     (data_dir / "valid.jsonl").write_text(valid_jsonl)
 
-    # ── 1. train ───────────────────────────────────────────────────────────
+    q: queue.Queue = queue.Queue()
+    SENTINEL = object()
+
+    # ── 1. model + trainer setup (main thread) ─────────────────────────────
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL, max_seq_length=MAX_SEQ_LEN, dtype=None, load_in_4bit=True)
     tokenizer = get_chat_template(
@@ -112,41 +125,71 @@ def train_and_export(train_jsonl: str, valid_jsonl: str, job_id: str = "") -> di
             save_strategy="no",
         ),
     )
-    trainer.train()
-    eval_loss = trainer.evaluate().get("eval_loss")
+    max_steps = trainer.args.max_steps or 0
 
-    model.save_pretrained(str(adapter_dir))
-    tokenizer.save_pretrained(str(adapter_dir))
-    del model, trainer
-    torch.cuda.empty_cache()
-    import gc; gc.collect()
+    class _Prog(TrainerCallback):
+        def _push(self, state, logs, kind):
+            q.put({"type": kind, "step": state.global_step,
+                   "max_steps": max_steps,
+                   "loss": (logs or {}).get("loss"),
+                   "eval_loss": (logs or {}).get("eval_loss")})
 
-    # ── 2. clean 16-bit merge (tokenizer/config the GGUF converter needs) ───
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=str(adapter_dir), max_seq_length=MAX_SEQ_LEN,
-        dtype=torch.bfloat16, load_in_4bit=False)
-    model.save_pretrained_merged(str(merged_dir), tokenizer,
-                                 save_method="merged_16bit")
-    del model
-    torch.cuda.empty_cache(); gc.collect()
+        def on_log(self, args, state, logs=None, **kw):
+            self._push(state, logs, "log")
 
-    # ── 3. adapter → GGUF ─────────────────────────────────────────────────
-    subprocess.run(["python", "/root/llama.cpp/convert_lora_to_gguf.py",
-                    str(adapter_dir), "--outfile", str(adapter_gguf),
-                    "--base", str(merged_dir)], check=True)
-    hf_cache.commit()
+        def on_evaluate(self, args, state, logs=None, **kw):
+            self._push(state, logs, "eval")
 
-    size_mb = adapter_gguf.stat().st_size / 1e6
-    modelfile = (
-        "FROM llama3.2:3b\n"
-        "ADAPTER ./adapter.gguf\n\n"
-        "PARAMETER temperature 0.7\n"
-        "PARAMETER top_p 0.9\n"
-        "PARAMETER repeat_penalty 1.15\n")
+    trainer.add_callback(_Prog())
 
-    return {
-        "adapter": adapter_gguf.read_bytes(),
-        "modelfile": modelfile,
-        "eval_loss": round(eval_loss, 4) if eval_loss else None,
-        "adapter_mb": round(size_mb, 1),
-    }
+    # ── 2. run training + export on a worker thread ────────────────────────
+    def _run():
+        try:
+            q.put({"type": "phase", "phase": "training"})
+            trainer.train()
+            eval_loss = trainer.evaluate().get("eval_loss")
+
+            model.save_pretrained(str(adapter_dir))
+            tokenizer.save_pretrained(str(adapter_dir))
+            del model, trainer
+            torch.cuda.empty_cache(); gc.collect()
+
+            q.put({"type": "phase", "phase": "merging"})
+            m, tok = FastLanguageModel.from_pretrained(
+                model_name=str(adapter_dir), max_seq_length=MAX_SEQ_LEN,
+                dtype=torch.bfloat16, load_in_4bit=False)
+            m.save_pretrained_merged(str(merged_dir), tok, save_method="merged_16bit")
+            del m
+            torch.cuda.empty_cache(); gc.collect()
+
+            q.put({"type": "phase", "phase": "converting"})
+            subprocess.run(["python", "/root/llama.cpp/convert_lora_to_gguf.py",
+                            str(adapter_dir), "--outfile", str(adapter_gguf),
+                            "--base", str(merged_dir)], check=True)
+            hf_cache.commit()
+
+            q.put({"type": "result",
+                    "adapter": adapter_gguf.read_bytes(),
+                    "modelfile": (
+                        "FROM llama3.2:3b\n"
+                        "ADAPTER ./adapter.gguf\n\n"
+                        "PARAMETER temperature 0.7\n"
+                        "PARAMETER top_p 0.9\n"
+                        "PARAMETER repeat_penalty 1.15\n"),
+                    "eval_loss": round(eval_loss, 4) if eval_loss else None,
+                    "adapter_mb": round(adapter_gguf.stat().st_size / 1e6, 1)})
+        except Exception as e:  # surface to the generator → DBOS step errors
+            q.put({"type": "error", "error": str(e)[:500]})
+        finally:
+            q.put(SENTINEL)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+    # ── 3. drain the queue, yielding events as they arrive ────────────────
+    while True:
+        item = q.get()
+        if item is SENTINEL:
+            break
+        if item.get("type") == "error":
+            raise RuntimeError(item["error"])
+        yield item

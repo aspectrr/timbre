@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     n_samples     INTEGER,
     n_curated     INTEGER,
     n_pairs       INTEGER,
+    train_step    INTEGER,
     train_loss    REAL,
     eval_loss     REAL,
     adapter_mb    REAL,
@@ -56,6 +57,11 @@ def _connect() -> sqlite3.Connection:
 def init_db() -> None:
     with _connect() as c:
         c.executescript(SCHEMA)
+        # Idempotent migration for existing volumes: CREATE TABLE IF NOT EXISTS
+        # won't add columns to an existing /data DB on a redeployed Fly machine.
+        cols = {r[1] for r in c.execute("PRAGMA table_info(jobs)")}
+        if "train_step" not in cols:
+            c.execute("ALTER TABLE jobs ADD COLUMN train_step INTEGER")
 
 
 def create_job(job_id: str, author: list[str], synth_model: str,

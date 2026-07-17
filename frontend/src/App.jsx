@@ -22,6 +22,11 @@ export default function App() {
   const [tab, setTab] = createSignal(savedId ? "train" : "guide");
   const [jobId, setJobId] = createSignal(savedId);
   const [status, setStatus] = createSignal(null);
+  // conn: "ok" | "reconnecting" | "gone" — survives transient blips without
+  // wiping the saved job. The old code cleared localStorage on any non-stage
+  // response, so one Fly cold-start 503 = Guide tab.
+  const [conn, setConn] = createSignal("ok");
+  const [submitErr, setSubmitErr] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   let pollTimer;
 
@@ -36,10 +41,17 @@ export default function App() {
 
   const submit = async () => {
     if (!files().length) { alert("Choose at least one file."); return; }
-    setBusy(true);
-    const j = await createJob(author(), synth(), files());
+    setBusy(true); setSubmitErr("");
+    let j;
+    try {
+      j = await createJob(author(), synth(), files());
+    } catch (e) {
+      setBusy(false);
+      setSubmitErr(e.message || "Could not reach the server.");
+      return;
+    }
     setBusy(false);
-    if (j.error) { alert(j.error); return; }
+    if (j.error) { setSubmitErr(j.error); return; }
     localStorage.setItem(JOB_KEY, j.job_id);
     setJobId(j.job_id);
     setTab("train");
@@ -49,17 +61,29 @@ export default function App() {
   const poll = (id) => {
     clearTimeout(pollTimer);
     getStatus(id).then((s) => {
-      // 404 / purged job → drop the stale id so the form isn't stuck polling.
       if (!s || !s.stage) {
+        // Unexpected payload (not a clean 404) — keep the job, retry softly.
+        setConn("reconnecting");
+        pollTimer = setTimeout(() => poll(id), 3000);
+        return;
+      }
+      setConn("ok");
+      setStatus(s);
+      if (s.stage !== "done" && s.stage !== "error") {
+        pollTimer = setTimeout(() => poll(id), 2000);
+      }
+    }).catch((e) => {
+      if (e.status === 404) {
+        // Backend confirmed the job is gone (purged / ephemeral disk).
+        setConn("gone");
         localStorage.removeItem(JOB_KEY);
         setJobId(null);
         setStatus(null);
         return;
       }
-      setStatus(s);
-      if (s.stage !== "done" && s.stage !== "error") {
-        pollTimer = setTimeout(() => poll(id), 2000);
-      }
+      // Network blip / cold-start 5xx / bad JSON — DO NOT drop the job.
+      setConn("reconnecting");
+      pollTimer = setTimeout(() => poll(id), 3000);
     });
   };
 
@@ -80,6 +104,8 @@ export default function App() {
     if (s.n_samples != null) out.push(<><b>{s.n_samples}</b> samples</>);
     if (s.n_curated != null) out.push(<><b>{s.n_curated}</b> kept</>);
     if (s.n_pairs != null) out.push(<><b>{s.n_pairs}</b> pairs</>);
+    if (s.train_step != null) out.push(<><b>step {s.train_step}</b></>);
+    if (s.train_loss != null) out.push(<><b>{s.train_loss}</b> loss</>);
     if (s.eval_loss != null) out.push(<><b>{s.eval_loss}</b> eval loss</>);
     return out;
   };
@@ -173,6 +199,9 @@ export default function App() {
             </div>
             <div class="bar"><i style={{ width: `${st().progress_pct || 0}%` }} /></div>
             <div class="msg">{st().message || LABELS[cur()] || ""}</div>
+            <Show when={conn() === "reconnecting"}>
+              <div class="msg" style={{ opacity: 0.6 }}>reconnecting…</div>
+            </Show>
             <div class="stats">{stats()}</div>
 
             <Show when={cur() === "done"}>

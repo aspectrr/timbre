@@ -142,18 +142,51 @@ def step_synthesize(job_id: str, synth_model: str) -> None:
 
 @DBOS.step()
 def step_train(job_id: str) -> None:
-    """Call Modal GPU (stateless): send training JSONL, receive adapter bytes."""
+    """Call Modal GPU (stateless): stream training progress, receive adapter bytes.
+
+    The GPU function is a generator that yields phase/log/eval events as it
+    trains, then a final result. We persist each event so the frontend's 2s
+    poll sees live step/loss instead of a 10-min freeze."""
     def body():
         gguf_path = _job_dir(job_id) / "adapter.gguf"
         if gguf_path.exists():
             return
         import modal
         status.update_job(job_id, stage="training",
-                          message="training on GPU (~10 min)...", progress_pct=80)
+                          message="warming up GPU...", progress_pct=78)
         train_text = (_job_dir(job_id) / "data" / "train.jsonl").read_text()
         valid_text = (_job_dir(job_id) / "data" / "valid.jsonl").read_text()
         fn = modal.Function.from_name("style-clone-gpu", "train_and_export")
-        result = fn.remote(train_text, valid_text, job_id)
+
+        result = None
+        phase_msg = {"training": "training on GPU...",
+                     "merging": "merging weights...",
+                     "converting": "converting to GGUF..."}
+        for evt in fn.remote_gen(train_text, valid_text, job_id):
+            kind = evt.get("type")
+            if kind == "phase":
+                status.update_job(job_id, stage="training",
+                                  message=phase_msg.get(evt["phase"], evt["phase"]))
+            elif kind in ("log", "eval"):
+                step = evt.get("step")
+                pct = 78
+                if step and evt.get("max_steps"):
+                    pct = 78 + int(step / evt["max_steps"] * 19)
+                fields = {"stage": "training", "progress_pct": pct,
+                          "train_step": step}
+                if evt.get("loss") is not None:
+                    fields["train_loss"] = round(evt["loss"], 4)
+                if evt.get("eval_loss") is not None:
+                    fields["eval_loss"] = round(evt["eval_loss"], 4)
+                msg = f"step {step}" if kind == "log" else "validating"
+                if evt.get("loss") is not None:
+                    msg += f" · loss {round(evt['loss'], 3)}"
+                fields["message"] = msg
+                status.update_job(job_id, **fields)
+            elif kind == "result":
+                result = evt
+        if not result or "adapter" not in result:
+            raise RuntimeError("GPU returned no result")
         gguf_path.write_bytes(result["adapter"])
         (_job_dir(job_id) / "Modelfile").write_text(result["modelfile"])
         status.update_job(job_id, stage="exporting",

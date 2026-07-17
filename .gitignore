@@ -30,3 +30,7 @@ venv/
 # uv / venv (keep uv.lock committed for reproducibility)
 .venv/
 .uv-cache/
+
+# Local dev artifacts (status self-check writes these)
+.data/
+.data_test/
