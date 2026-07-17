@@ -143,7 +143,10 @@ def train_and_export(train_jsonl: str, valid_jsonl: str, job_id: str = ""):
     trainer.add_callback(_Prog())
 
     # ── 2. run training + export on a worker thread ────────────────────────
-    def _run():
+    # model/tokenizer/trainer are passed as ARGS, not captured — `del` on a
+    # free (closure) var makes it local for the whole fn, turning the reads
+    # above into UnboundLocalError. Params are real locals, so `del` is safe.
+    def _run(model, tokenizer, trainer):
         try:
             q.put({"type": "phase", "phase": "training"})
             trainer.train()
@@ -183,7 +186,8 @@ def train_and_export(train_jsonl: str, valid_jsonl: str, job_id: str = ""):
         finally:
             q.put(SENTINEL)
 
-    threading.Thread(target=_run, daemon=True).start()
+    threading.Thread(target=_run, args=(model, tokenizer, trainer),
+                     daemon=True).start()
 
     # ── 3. drain the queue, yielding events as they arrive ────────────────
     while True:

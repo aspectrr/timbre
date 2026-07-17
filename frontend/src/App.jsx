@@ -33,7 +33,12 @@ export default function App() {
   onMount(() => { if (jobId()) poll(jobId()); });
 
   // append — a second pick/drop adds to the list, doesn't wipe the first.
-  const onPick = (e) => setFiles((p) => [...p, ...e.target.files]);
+  // reset the input value after so onChange always fires (without this, picking
+  // a file with the same name as a prior pick is a no-op — value unchanged).
+  const onPick = (e) => {
+    setFiles((p) => [...p, ...Array.from(e.target.files)]);
+    e.target.value = "";
+  };
   const onDrop = (e) => {
     e.preventDefault(); setDragging(false);
     setFiles((p) => [...p, ...e.dataTransfer.files]);
