@@ -213,6 +213,19 @@ button:disabled { opacity: 0.4; cursor: default; }
 }
 .tab:hover { opacity: 1; background: none; }
 .tab.active { border-bottom-color: var(--ink); font-weight: 700; }
+.tab .live {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--ink);
+  margin-left: 8px;
+  vertical-align: middle;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .tab .live { animation: none; opacity: 0.7; }
+}
 
 /* ── progress: quiet metadata, monochrome ── */
 .stepper {
@@ -259,6 +272,38 @@ button:disabled { opacity: 0.4; cursor: default; }
   text-transform: uppercase;
 }
 .stats b { font-weight: 700; }
+
+/* ── live loss sparkline: monochrome inline SVG ── */
+.loss {
+  margin: 24px 0 8px;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  padding: 16px 0 8px;
+  color: var(--ink);
+}
+.loss svg { width: 100%; height: 56px; display: block; }
+.loss-legend {
+  font-size: 13px;
+  letter-spacing: -0.6px;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin-top: 6px;
+}
+
+/* ── reset: ghost button, not full-width ── */
+.reset-row { margin-top: 48px; }
+.reset {
+  background: none;
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  padding: 12px 20px;
+  width: auto;
+  font-size: var(--text-caption);
+  letter-spacing: -0.8px;
+  text-transform: uppercase;
+}
+.reset:hover { background: var(--ink); color: var(--bone); opacity: 1; }
 
 /* ── downloads: outlined links ── */
 .dl { display: flex; gap: 0; margin-top: 32px; }

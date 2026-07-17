@@ -28,6 +28,11 @@ export default function App() {
   const [conn, setConn] = createSignal("ok");
   const [submitErr, setSubmitErr] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  // loss history for the live chart — in-session only. Cleared on reset.
+  // After a refresh the graph rebuilds from subsequent polls (the backend
+  // stores only the latest loss, not a history). upgrade: persist the array.
+  const [lossPts, setLossPts] = createSignal([]);
+  const [evalPts, setEvalPts] = createSignal([]);
   let pollTimer;
 
   onMount(() => { if (jobId()) poll(jobId()); });
@@ -74,6 +79,15 @@ export default function App() {
       }
       setConn("ok");
       setStatus(s);
+      // accumulate loss points for the live chart (dedup by step)
+      if (s.train_step != null && s.train_loss != null) {
+        setLossPts((p) => p.length && p[p.length - 1][0] === s.train_step
+          ? p : [...p, [s.train_step, s.train_loss]]);
+      }
+      if (s.eval_loss != null && s.train_step != null) {
+        setEvalPts((p) => p.length && p[p.length - 1][0] === s.train_step
+          ? p : [...p, [s.train_step, s.eval_loss]]);
+      }
       if (s.stage !== "done" && s.stage !== "error") {
         pollTimer = setTimeout(() => poll(id), 2000);
       }
@@ -98,6 +112,22 @@ export default function App() {
     poll(jobId());
   };
 
+  const isActive = () => jobId() && cur() && cur() !== "done" && cur() !== "error";
+
+  // abandon this job in the UI (the backend keeps running). clears the saved
+  // id so a refresh won't resurrect it, and resets the form + chart.
+  const reset = () => {
+    if (isActive() && !confirm("A job is still training. Abandon it and start over?")) return;
+    clearTimeout(pollTimer);
+    localStorage.removeItem(JOB_KEY);
+    setJobId(null);
+    setStatus(null);
+    setConn("ok");
+    setLossPts([]);
+    setEvalPts([]);
+    setSubmitErr("");
+  };
+
   onCleanup(() => clearTimeout(pollTimer));
 
   const st = () => status() || {};
@@ -113,6 +143,37 @@ export default function App() {
     if (s.train_loss != null) out.push(<><b>{s.train_loss}</b> loss</>);
     if (s.eval_loss != null) out.push(<><b>{s.eval_loss}</b> eval loss</>);
     return out;
+  };
+
+  // hand-rolled monochrome sparkline — no chart lib. loss line + faint
+  // vertical guides at eval steps. null until 2+ points exist.
+  const chart = () => {
+    const pts = lossPts();
+    if (pts.length < 2) return null;
+    const W = 100, H = 28;
+    const ys = pts.map(([, l]) => l);
+    const lo = Math.min(...ys), hi = Math.max(...ys), span = hi - lo || 1;
+    const xs = pts.map(([s]) => s);
+    const x0 = xs[0], xr = (xs[xs.length - 1] - x0) || 1;
+    const xy = ([s, l]) =>
+      [((s - x0) / xr) * W, H - ((l - lo) / span) * (H - 4) - 2];
+    const line = pts.map(xy)
+      .map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+    return (
+      <div class="loss" aria-label="training loss">
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+          {evalPts().map(([s], i) => (
+            <line x1={((s - x0) / xr) * W} y1="0"
+              x2={((s - x0) / xr) * W} y2={H}
+              stroke="currentColor" stroke-width="0.5" opacity="0.18"
+              vector-effect="non-scaling-stroke" />
+          ))}
+          <polyline points={line} fill="none" stroke="currentColor"
+            vector-effect="non-scaling-stroke" />
+        </svg>
+        <div class="loss-legend">loss</div>
+      </div>
+    );
   };
 
   return (
@@ -142,7 +203,7 @@ export default function App() {
 
       <div class="tabs">
         <button class={`tab ${tab() === "guide" ? "active" : ""}`} onClick={() => setTab("guide")}>Guide</button>
-        <button class={`tab ${tab() === "train" ? "active" : ""}`} onClick={() => setTab("train")}>Train</button>
+        <button class={`tab ${tab() === "train" ? "active" : ""}`} onClick={() => setTab("train")}>Train<Show when={isActive()}><span class="live" /></Show></button>
       </div>
 
       <Show when={tab() === "guide"}>
@@ -150,6 +211,7 @@ export default function App() {
       </Show>
 
       <Show when={tab() === "train"}>
+        <Show when={!jobId()}>
         <section style={{ "padding-top": "0" }}>
           <p class="label">Train</p>
           <h2 class="section-title">New job</h2>
@@ -190,9 +252,10 @@ export default function App() {
             {busy() ? "Starting" : "Train →"}
           </button>
         </section>
+        </Show>
 
         <Show when={jobId()}>
-          <section>
+          <section style={{ "padding-top": "0" }}>
             <p class="label">Progress</p>
             <div class="stepper">
               {STAGES.map((name, i) => {
@@ -209,6 +272,8 @@ export default function App() {
             </Show>
             <div class="stats">{stats()}</div>
 
+            {chart()}
+
             <Show when={cur() === "done"}>
               <div class="dl">
                 <a href={downloadUrl(jobId(), "adapter.gguf")} download>↓ adapter.gguf</a>
@@ -222,6 +287,10 @@ export default function App() {
                 <button onClick={retry}>Retry →</button>
               </div>
             </Show>
+
+            <div class="reset-row">
+              <button class="reset" onClick={reset}>Start new</button>
+            </div>
           </section>
         </Show>
       </Show>
