@@ -4,6 +4,16 @@ import { createJob, getStatus, resumeJob, downloadUrl } from "./api.js";
 
 // ponytail: one-slot localStorage — fine until a user needs a job history list.
 const JOB_KEY = "styleclone:job_id";
+const LOSS_KEY = "styleclone:loss";   // [step,loss] points, persisted across refresh
+const EVAL_KEY = "styleclone:eval";   // [step,eval_loss] points
+
+// append [step,val] to a persisted signal, deduping consecutive same-step
+// points. Writes localStorage so a refresh rebuilds the full curve.
+function _push(key, setter, step, val) {
+  setter((p) => p.length && p[p.length - 1][0] === step ? p
+    : (() => { const n = [...p, [step, val]];
+               localStorage.setItem(key, JSON.stringify(n)); return n; })());
+}
 
 const STAGES = ["ingesting", "curating", "synthesizing", "training", "exporting", "done"];
 const LABELS = {
@@ -28,11 +38,12 @@ export default function App() {
   const [conn, setConn] = createSignal("ok");
   const [submitErr, setSubmitErr] = createSignal("");
   const [busy, setBusy] = createSignal(false);
-  // loss history for the live chart — in-session only. Cleared on reset.
-  // After a refresh the graph rebuilds from subsequent polls (the backend
-  // stores only the latest loss, not a history). upgrade: persist the array.
-  const [lossPts, setLossPts] = createSignal([]);
-  const [evalPts, setEvalPts] = createSignal([]);
+  // loss history for the live chart — persisted to localStorage so a refresh
+  // rebuilds the full curve, not just points after the reload.
+  const [lossPts, setLossPts] = createSignal(
+    JSON.parse(localStorage.getItem(LOSS_KEY) || "[]"));
+  const [evalPts, setEvalPts] = createSignal(
+    JSON.parse(localStorage.getItem(EVAL_KEY) || "[]"));
   let pollTimer;
 
   onMount(() => { if (jobId()) poll(jobId()); });
@@ -79,15 +90,11 @@ export default function App() {
       }
       setConn("ok");
       setStatus(s);
-      // accumulate loss points for the live chart (dedup by step)
-      if (s.train_step != null && s.train_loss != null) {
-        setLossPts((p) => p.length && p[p.length - 1][0] === s.train_step
-          ? p : [...p, [s.train_step, s.train_loss]]);
-      }
-      if (s.eval_loss != null && s.train_step != null) {
-        setEvalPts((p) => p.length && p[p.length - 1][0] === s.train_step
-          ? p : [...p, [s.train_step, s.eval_loss]]);
-      }
+      // accumulate loss points for the live chart (dedup by step, persist)
+      if (s.train_step != null && s.train_loss != null)
+        _push(LOSS_KEY, setLossPts, s.train_step, s.train_loss);
+      if (s.train_step != null && s.eval_loss != null)
+        _push(EVAL_KEY, setEvalPts, s.train_step, s.eval_loss);
       if (s.stage !== "done" && s.stage !== "error") {
         pollTimer = setTimeout(() => poll(id), 2000);
       }
@@ -120,6 +127,8 @@ export default function App() {
     if (isActive() && !confirm("A job is still training. Abandon it and start over?")) return;
     clearTimeout(pollTimer);
     localStorage.removeItem(JOB_KEY);
+    localStorage.removeItem(LOSS_KEY);
+    localStorage.removeItem(EVAL_KEY);
     setJobId(null);
     setStatus(null);
     setConn("ok");
