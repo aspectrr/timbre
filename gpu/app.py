@@ -128,17 +128,22 @@ def train_and_export(train_jsonl: str, valid_jsonl: str, job_id: str = ""):
     max_steps = trainer.args.max_steps or 0
 
     class _Prog(TrainerCallback):
-        def _push(self, state, logs, kind):
+        def _push(self, state, data, kind):
+            data = data or {}
             q.put({"type": kind, "step": state.global_step,
                    "max_steps": max_steps,
-                   "loss": (logs or {}).get("loss"),
-                   "eval_loss": (logs or {}).get("eval_loss")})
+                   "loss": data.get("loss"),
+                   "eval_loss": data.get("eval_loss")})
 
-        def on_log(self, args, state, logs=None, **kw):
+        # HF calls these as callback.on_log(args, state, control, logs=logs) —
+        # `control` is a required positional; drop it and logs binds to it
+        # positionally, then the logs= keyword collides -> "multiple values".
+        # on_evaluate passes the dict as `metrics`, not `logs`.
+        def on_log(self, args, state, control, logs=None, **kw):
             self._push(state, logs, "log")
 
-        def on_evaluate(self, args, state, logs=None, **kw):
-            self._push(state, logs, "eval")
+        def on_evaluate(self, args, state, control, metrics=None, **kw):
+            self._push(state, metrics, "eval")
 
     trainer.add_callback(_Prog())
 
