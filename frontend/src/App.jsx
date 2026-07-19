@@ -26,16 +26,32 @@ const ACCEPTED = [".mbox", ".eml", ".txt", ".md"];
 const isAccepted = (name) =>
   ACCEPTED.some((ext) => name.toLowerCase().endsWith(ext));
 
+// Resolve a file's effective name from its relative path. The macOS Mail
+// bundle stores its data in a bare file named `mbox` (no extension); the
+// backend routes by extension, so rename it to the enclosing `<bundle>.mbox`.
+// Finds the nearest ancestor dir ending in .mbox so nesting works too.
+const _resolveName = (name, relPath) => {
+  if (name.toLowerCase() === "mbox" && relPath) {
+    const segs = relPath.split("/").filter(Boolean);
+    const bundle = segs.slice(0, -1).reverse()
+      .find((s) => s.toLowerCase().endsWith(".mbox"));
+    if (bundle) return bundle;
+  }
+  return name;
+};
+// map a raw file + its relative path to a (possibly renamed) accepted File
+const _resolveFile = (file, relPath) => {
+  const name = _resolveName(file.name, relPath);
+  if (!isAccepted(name)) return null;
+  return name === file.name ? file : new File([file], name, { type: file.type });
+};
+
 // ── drag-and-drop folder/bundle traversal ────────────────────────────────
 // A macOS Mail export is a `.mbox` *bundle directory* (Finder shows one icon).
 // The file picker can't select a folder, but a DROP can read into it via the
-// FileSystem Entry API. We walk any dropped folder, pull out the accepted
-// files, and rename the inner `mbox` data file to `<bundle>.mbox` so the
-// backend (which routes by extension) parses it. Seamless: drop the bundle,
-// it just works.
-//
-// ponytail: webkitGetAsEntry only — covers Chrome/Edge/Safari/Firefox.
-// No fallback path; the click picker handles browsers without it.
+// FileSystem Entry API. We walk any dropped folder and pull out accepted
+// files (renaming the inner `mbox`). ponytail: webkitGetAsEntry only —
+// covers Chrome/Edge/Safari/Firefox; the folder picker handles the rest.
 const _readEntries = (reader) => new Promise((resolve) => {
   const out = []; // readEntries returns in batches — loop until empty
   const step = () => reader.readEntries((batch) =>
@@ -47,16 +63,9 @@ const _entryFile = (entry) => new Promise((res) => entry.file(res));
 async function _walk(entry, dirPath = "") {
   if (entry.isFile) {
     const file = await _entryFile(entry);
-    let name = file.name;
-    // macOS bundle: the data file is literally named `mbox` (no extension).
-    // rename to the bundle dir name so the backend ingests it.
-    if (name.toLowerCase() === "mbox" && dirPath) {
-      const dir = dirPath.split("/")[0];
-      name = dir.toLowerCase().endsWith(".mbox") ? dir : `${dir}.mbox`;
-    }
-    return isAccepted(name)
-      ? [name === file.name ? file : new File([file], name, { type: file.type })]
-      : [];
+    const rel = dirPath ? `${dirPath}/${file.name}` : file.name;
+    const got = _resolveFile(file, rel);
+    return got ? [got] : [];
   }
   if (entry.isDirectory) {
     const here = dirPath ? `${dirPath}/${entry.name}` : entry.name;
@@ -112,6 +121,19 @@ export default function App() {
     }
     setPickHint("");
     setFiles((p) => [...p, ...picked]);
+    e.target.value = "";
+  };
+  // Folder picker (webkitdirectory) — lets a macOS Mail `.mbox` bundle be
+  // selected by CLICK (a normal file dialog can't grab a folder). Recurses
+  // the whole subtree; the bare inner `mbox` is renamed to `<bundle>.mbox`.
+  // Supported in all modern browsers incl. Safari 18.4+.
+  const onPickFolder = (e) => {
+    const picked = Array.from(e.target.files);
+    const resolved = picked
+      .map((f) => _resolveFile(f, f.webkitRelativePath || f.name))
+      .filter(Boolean);
+    setPickHint("");
+    if (resolved.length) setFiles((p) => [...p, ...resolved]);
     e.target.value = "";
   };
   const onDrop = (e) => {
@@ -320,6 +342,13 @@ export default function App() {
               Drop files or a mailbox folder here, or click to choose
               <input id="file" type="file" multiple hidden
                 accept=".mbox,.eml,.txt,.md" onChange={onPick} />
+            </div>
+            <div class="folder-alt">
+              Using Apple Mail? <button type="button" class="linkbtn"
+                onClick={() => document.getElementById("folder").click()}>choose your .mbox folder</button>
+              instead.
+              <input id="folder" type="file" webkitdirectory directory hidden
+                onChange={onPickFolder} />
             </div>
             <div class="flist">
               {files().map((f, i) => (
