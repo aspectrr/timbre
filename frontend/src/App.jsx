@@ -109,30 +109,18 @@ export default function App() {
   // a file with the same name as a prior pick is a no-op — value unchanged).
   // macOS Mail exports .mbox as a *bundle directory* (Finder shows one icon,
   // but it's a folder). The file picker can't select a directory, so it fires
-  // onChange with an empty FileList → nothing loads. Catch that and explain.
+  // The drop-zone click opens a FOLDER picker (webkitdirectory): it handles
+  // macOS Mail .mbox bundles AND any folder of writing files, since we filter
+  // by extension after. The bare inner `mbox` is renamed to `<bundle>.mbox`.
+  // A lone flat file (e.g. a Takeout .mbox in Downloads) can't be selected
+  // here — drag-and-drop it instead (drag handles both files and folders).
   const onPick = (e) => {
-    const picked = Array.from(e.target.files);
-    if (!picked.length) {
-      // A click-select that returns nothing usually means a macOS Mail
-      // folder was picked — the picker can't grab a folder. Nudge to drag,
-      // which CAN read into it. Kept short: no internals, just the action.
-      setPickHint("Try dragging that onto the drop zone instead.");
-      return;
-    }
-    setPickHint("");
-    setFiles((p) => [...p, ...picked]);
-    e.target.value = "";
-  };
-  // Folder picker (webkitdirectory) — lets a macOS Mail `.mbox` bundle be
-  // selected by CLICK (a normal file dialog can't grab a folder). Recurses
-  // the whole subtree; the bare inner `mbox` is renamed to `<bundle>.mbox`.
-  // Supported in all modern browsers incl. Safari 18.4+.
-  const onPickFolder = (e) => {
     const picked = Array.from(e.target.files);
     const resolved = picked
       .map((f) => _resolveFile(f, f.webkitRelativePath || f.name))
       .filter(Boolean);
-    setPickHint("");
+    setPickHint(resolved.length ? ""
+      : "No writing files (.mbox, .eml, .txt, .md) found in that folder.");
     if (resolved.length) setFiles((p) => [...p, ...resolved]);
     e.target.value = "";
   };
@@ -339,16 +327,9 @@ export default function App() {
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
               onDrop={onDrop}>
-              Drop files or a mailbox folder here, or click to choose
-              <input id="file" type="file" multiple hidden
-                accept=".mbox,.eml,.txt,.md" onChange={onPick} />
-            </div>
-            <div class="folder-alt">
-              Using Apple Mail? <button type="button" class="linkbtn"
-                onClick={() => document.getElementById("folder").click()}>choose your .mbox folder</button>
-              instead.
-              <input id="folder" type="file" webkitdirectory directory hidden
-                onChange={onPickFolder} />
+              Drop files or a mailbox folder here, or click to choose a folder
+              <input id="file" type="file" webkitdirectory directory multiple hidden
+                onChange={onPick} />
             </div>
             <div class="flist">
               {files().map((f, i) => (
@@ -361,7 +342,8 @@ export default function App() {
               <div class="errbox" style={{ "margin-top": "16px" }}>{pickHint()}</div>
             </Show>
           </div>
-          <button disabled={busy()} onClick={submit}>
+          <button class="train-btn" disabled={busy()} onClick={submit}>
+            {busy() && <span class="spin" aria-hidden="true" />}
             {busy() ? "Starting" : "Train →"}
           </button>
         </section>
