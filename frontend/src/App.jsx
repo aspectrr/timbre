@@ -4,6 +4,16 @@ import { createJob, getStatus, resumeJob, downloadUrl } from "./api.js";
 
 // ponytail: one-slot localStorage — fine until a user needs a job history list.
 const JOB_KEY = "styleclone:job_id";
+const LOSS_KEY = "styleclone:loss";   // [step,loss] points, persisted across refresh
+const EVAL_KEY = "styleclone:eval";   // [step,eval_loss] points
+
+// append [step,val] to a persisted signal, deduping consecutive same-step
+// points. Writes localStorage so a refresh rebuilds the full curve.
+function _push(key, setter, step, val) {
+  setter((p) => p.length && p[p.length - 1][0] === step ? p
+    : (() => { const n = [...p, [step, val]];
+               localStorage.setItem(key, JSON.stringify(n)); return n; })());
+}
 
 const STAGES = ["ingesting", "curating", "synthesizing", "training", "exporting", "done"];
 const LABELS = {
@@ -11,6 +21,61 @@ const LABELS = {
   training: "Train", exporting: "Export", done: "Done",
   queued: "Queued", error: "Error",
 };
+
+const ACCEPTED = [".mbox", ".eml", ".txt", ".md"];
+const isAccepted = (name) =>
+  ACCEPTED.some((ext) => name.toLowerCase().endsWith(ext));
+
+// Resolve a file's effective name from its relative path. The macOS Mail
+// bundle stores its data in a bare file named `mbox` (no extension); the
+// backend routes by extension, so rename it to the enclosing `<bundle>.mbox`.
+// Finds the nearest ancestor dir ending in .mbox so nesting works too.
+const _resolveName = (name, relPath) => {
+  if (name.toLowerCase() === "mbox" && relPath) {
+    const segs = relPath.split("/").filter(Boolean);
+    const bundle = segs.slice(0, -1).reverse()
+      .find((s) => s.toLowerCase().endsWith(".mbox"));
+    if (bundle) return bundle;
+  }
+  return name;
+};
+// map a raw file + its relative path to a (possibly renamed) accepted File
+const _resolveFile = (file, relPath) => {
+  const name = _resolveName(file.name, relPath);
+  if (!isAccepted(name)) return null;
+  return name === file.name ? file : new File([file], name, { type: file.type });
+};
+
+// ── drag-and-drop folder/bundle traversal ────────────────────────────────
+// A macOS Mail export is a `.mbox` *bundle directory* (Finder shows one icon).
+// The file picker can't select a folder, but a DROP can read into it via the
+// FileSystem Entry API. We walk any dropped folder and pull out accepted
+// files (renaming the inner `mbox`). ponytail: webkitGetAsEntry only —
+// covers Chrome/Edge/Safari/Firefox; the folder picker handles the rest.
+const _readEntries = (reader) => new Promise((resolve) => {
+  const out = []; // readEntries returns in batches — loop until empty
+  const step = () => reader.readEntries((batch) =>
+    batch.length ? (out.push(...batch), step()) : resolve(out));
+  step();
+});
+const _entryFile = (entry) => new Promise((res) => entry.file(res));
+
+async function _walk(entry, dirPath = "") {
+  if (entry.isFile) {
+    const file = await _entryFile(entry);
+    const rel = dirPath ? `${dirPath}/${file.name}` : file.name;
+    const got = _resolveFile(file, rel);
+    return got ? [got] : [];
+  }
+  if (entry.isDirectory) {
+    const here = dirPath ? `${dirPath}/${entry.name}` : entry.name;
+    const sub = await _readEntries(entry.createReader());
+    const out = [];
+    for (const e of sub) out.push(...(await _walk(e, here)));
+    return out;
+  }
+  return [];
+}
 
 export default function App() {
   const [author, setAuthor] = createSignal("");
@@ -22,24 +87,80 @@ export default function App() {
   const [tab, setTab] = createSignal(savedId ? "train" : "guide");
   const [jobId, setJobId] = createSignal(savedId);
   const [status, setStatus] = createSignal(null);
+  // conn: "ok" | "reconnecting" | "gone" — survives transient blips without
+  // wiping the saved job. The old code cleared localStorage on any non-stage
+  // response, so one Fly cold-start 503 = Guide tab.
+  const [conn, setConn] = createSignal("ok");
+  const [submitErr, setSubmitErr] = createSignal("");
+  const [pickHint, setPickHint] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  // loss history for the live chart — persisted to localStorage so a refresh
+  // rebuilds the full curve, not just points after the reload.
+  const [lossPts, setLossPts] = createSignal(
+    JSON.parse(localStorage.getItem(LOSS_KEY) || "[]"));
+  const [evalPts, setEvalPts] = createSignal(
+    JSON.parse(localStorage.getItem(EVAL_KEY) || "[]"));
   let pollTimer;
 
   onMount(() => { if (jobId()) poll(jobId()); });
 
   // append — a second pick/drop adds to the list, doesn't wipe the first.
-  const onPick = (e) => setFiles((p) => [...p, ...e.target.files]);
+  // reset the input value after so onChange always fires (without this, picking
+  // a file with the same name as a prior pick is a no-op — value unchanged).
+  // macOS Mail exports .mbox as a *bundle directory* (Finder shows one icon,
+  // but it's a folder). The file picker can't select a directory, so it fires
+  // Two click paths: a FILE picker (flat .mbox/.eml/.txt/.md — e.g. a Google
+  // Takeout export) and a FOLDER picker (macOS Mail .mbox bundles). A native
+  // dialog can't mix files and folders, so the standard fix is two pickers.
+  // Drag-and-drop (onDrop) accepts both in one motion.
+  const onPickFiles = (e) => {
+    const picked = Array.from(e.target.files)
+      .filter((f) => isAccepted(f.name));
+    setPickHint(picked.length ? "" : "Choose .mbox, .eml, .txt, or .md files.");
+    if (picked.length) setFiles((p) => [...p, ...picked]);
+    e.target.value = "";
+  };
+  const onPickFolder = (e) => {
+    const picked = Array.from(e.target.files);
+    const resolved = picked
+      .map((f) => _resolveFile(f, f.webkitRelativePath || f.name))
+      .filter(Boolean);
+    setPickHint(resolved.length ? ""
+      : "No writing files (.mbox, .eml, .txt, .md) found in that folder.");
+    if (resolved.length) setFiles((p) => [...p, ...resolved]);
+    e.target.value = "";
+  };
   const onDrop = (e) => {
     e.preventDefault(); setDragging(false);
-    setFiles((p) => [...p, ...e.dataTransfer.files]);
+    // Capture entries SYNCHRONOUSLY — the DataTransferItemList is invalidated
+    // once the handler awaits. Then walk async.
+    const entries = [...(e.dataTransfer?.items ?? [])]
+      .filter((it) => it.kind === "file")
+      .map((it) => it.webkitGetAsEntry?.())
+      .filter(Boolean);
+    if (entries.length) {
+      (async () => {
+        const files = (await Promise.all(entries.map(_walk))).flat();
+        if (files.length) setFiles((p) => [...p, ...files]);
+      })();
+    } else if (e.dataTransfer?.files?.length) {
+      setFiles((p) => [...p, ...Array.from(e.dataTransfer.files)]);
+    }
   };
 
   const submit = async () => {
     if (!files().length) { alert("Choose at least one file."); return; }
-    setBusy(true);
-    const j = await createJob(author(), synth(), files());
+    setBusy(true); setSubmitErr("");
+    let j;
+    try {
+      j = await createJob(author(), synth(), files());
+    } catch (e) {
+      setBusy(false);
+      setSubmitErr(e.message || "Could not reach the server.");
+      return;
+    }
     setBusy(false);
-    if (j.error) { alert(j.error); return; }
+    if (j.error) { setSubmitErr(j.error); return; }
     localStorage.setItem(JOB_KEY, j.job_id);
     setJobId(j.job_id);
     setTab("train");
@@ -49,17 +170,34 @@ export default function App() {
   const poll = (id) => {
     clearTimeout(pollTimer);
     getStatus(id).then((s) => {
-      // 404 / purged job → drop the stale id so the form isn't stuck polling.
       if (!s || !s.stage) {
+        // Unexpected payload (not a clean 404) — keep the job, retry softly.
+        setConn("reconnecting");
+        pollTimer = setTimeout(() => poll(id), 3000);
+        return;
+      }
+      setConn("ok");
+      setStatus(s);
+      // accumulate loss points for the live chart (dedup by step, persist)
+      if (s.train_step != null && s.train_loss != null)
+        _push(LOSS_KEY, setLossPts, s.train_step, s.train_loss);
+      if (s.train_step != null && s.eval_loss != null)
+        _push(EVAL_KEY, setEvalPts, s.train_step, s.eval_loss);
+      if (s.stage !== "done" && s.stage !== "error") {
+        pollTimer = setTimeout(() => poll(id), 2000);
+      }
+    }).catch((e) => {
+      if (e.status === 404) {
+        // Backend confirmed the job is gone (purged / ephemeral disk).
+        setConn("gone");
         localStorage.removeItem(JOB_KEY);
         setJobId(null);
         setStatus(null);
         return;
       }
-      setStatus(s);
-      if (s.stage !== "done" && s.stage !== "error") {
-        pollTimer = setTimeout(() => poll(id), 2000);
-      }
+      // Network blip / cold-start 5xx / bad JSON — DO NOT drop the job.
+      setConn("reconnecting");
+      pollTimer = setTimeout(() => poll(id), 3000);
     });
   };
 
@@ -67,6 +205,24 @@ export default function App() {
     if (!jobId()) return;
     await resumeJob(jobId());
     poll(jobId());
+  };
+
+  const isActive = () => jobId() && cur() && cur() !== "done" && cur() !== "error";
+
+  // abandon this job in the UI (the backend keeps running). clears the saved
+  // id so a refresh won't resurrect it, and resets the form + chart.
+  const reset = () => {
+    if (isActive() && !confirm("A job is still training. Abandon it and start over?")) return;
+    clearTimeout(pollTimer);
+    localStorage.removeItem(JOB_KEY);
+    localStorage.removeItem(LOSS_KEY);
+    localStorage.removeItem(EVAL_KEY);
+    setJobId(null);
+    setStatus(null);
+    setConn("ok");
+    setLossPts([]);
+    setEvalPts([]);
+    setSubmitErr("");
   };
 
   onCleanup(() => clearTimeout(pollTimer));
@@ -80,8 +236,41 @@ export default function App() {
     if (s.n_samples != null) out.push(<><b>{s.n_samples}</b> samples</>);
     if (s.n_curated != null) out.push(<><b>{s.n_curated}</b> kept</>);
     if (s.n_pairs != null) out.push(<><b>{s.n_pairs}</b> pairs</>);
+    if (s.train_step != null) out.push(<><b>step {s.train_step}</b></>);
+    if (s.train_loss != null) out.push(<><b>{s.train_loss}</b> loss</>);
     if (s.eval_loss != null) out.push(<><b>{s.eval_loss}</b> eval loss</>);
     return out;
+  };
+
+  // hand-rolled monochrome sparkline — no chart lib. loss line + faint
+  // vertical guides at eval steps. null until 2+ points exist.
+  const chart = () => {
+    const pts = lossPts();
+    if (pts.length < 2) return null;
+    const W = 100, H = 28;
+    const ys = pts.map(([, l]) => l);
+    const lo = Math.min(...ys), hi = Math.max(...ys), span = hi - lo || 1;
+    const xs = pts.map(([s]) => s);
+    const x0 = xs[0], xr = (xs[xs.length - 1] - x0) || 1;
+    const xy = ([s, l]) =>
+      [((s - x0) / xr) * W, H - ((l - lo) / span) * (H - 4) - 2];
+    const line = pts.map(xy)
+      .map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+    return (
+      <div class="loss" aria-label="training loss">
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+          {evalPts().map(([s], i) => (
+            <line x1={((s - x0) / xr) * W} y1="0"
+              x2={((s - x0) / xr) * W} y2={H}
+              stroke="currentColor" stroke-width="0.5" opacity="0.18"
+              vector-effect="non-scaling-stroke" />
+          ))}
+          <polyline points={line} fill="none" stroke="currentColor"
+            vector-effect="non-scaling-stroke" />
+        </svg>
+        <div class="loss-legend">loss</div>
+      </div>
+    );
   };
 
   return (
@@ -111,7 +300,7 @@ export default function App() {
 
       <div class="tabs">
         <button class={`tab ${tab() === "guide" ? "active" : ""}`} onClick={() => setTab("guide")}>Guide</button>
-        <button class={`tab ${tab() === "train" ? "active" : ""}`} onClick={() => setTab("train")}>Train</button>
+        <button class={`tab ${tab() === "train" ? "active" : ""}`} onClick={() => setTab("train")}>Train<Show when={isActive()}><span class="live" /></Show></button>
       </div>
 
       <Show when={tab() === "guide"}>
@@ -119,6 +308,7 @@ export default function App() {
       </Show>
 
       <Show when={tab() === "train"}>
+        <Show when={!jobId()}>
         <section style={{ "padding-top": "0" }}>
           <p class="label">Train</p>
           <h2 class="section-title">New job</h2>
@@ -137,15 +327,22 @@ export default function App() {
             </select>
           </div>
           <div class="field">
-            <label>Your writing files (.mbox, .eml, .txt, .md)</label>
+            <label>Your writing (.mbox, .eml, .txt, .md)</label>
             <div class={`drop ${dragging() ? "over" : ""}`}
-              onClick={() => document.getElementById("file").click()}
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
               onDrop={onDrop}>
-              Drop files here or click to choose
+              Drag a file or a mailbox folder here
+              <div class="pick">
+                <button type="button" class="pick-btn"
+                  onClick={(e) => { e.stopPropagation(); document.getElementById("file").click(); }}>Choose files</button>
+                <button type="button" class="pick-btn"
+                  onClick={(e) => { e.stopPropagation(); document.getElementById("folder").click(); }}>Choose folder</button>
+              </div>
               <input id="file" type="file" multiple hidden
-                accept=".mbox,.eml,.txt,.md" onChange={onPick} />
+                accept=".mbox,.eml,.txt,.md" onChange={onPickFiles} />
+              <input id="folder" type="file" webkitdirectory directory multiple hidden
+                onChange={onPickFolder} />
             </div>
             <div class="flist">
               {files().map((f, i) => (
@@ -154,14 +351,19 @@ export default function App() {
                 </span>
               ))}
             </div>
+            <Show when={pickHint()}>
+              <div class="errbox" style={{ "margin-top": "16px" }}>{pickHint()}</div>
+            </Show>
           </div>
-          <button disabled={busy()} onClick={submit}>
+          <button class="train-btn" disabled={busy()} onClick={submit}>
+            {busy() && <span class="spin" aria-hidden="true" />}
             {busy() ? "Starting" : "Train →"}
           </button>
         </section>
+        </Show>
 
         <Show when={jobId()}>
-          <section>
+          <section style={{ "padding-top": "0" }}>
             <p class="label">Progress</p>
             <div class="stepper">
               {STAGES.map((name, i) => {
@@ -173,7 +375,12 @@ export default function App() {
             </div>
             <div class="bar"><i style={{ width: `${st().progress_pct || 0}%` }} /></div>
             <div class="msg">{st().message || LABELS[cur()] || ""}</div>
+            <Show when={conn() === "reconnecting"}>
+              <div class="msg" style={{ opacity: 0.6 }}>reconnecting…</div>
+            </Show>
             <div class="stats">{stats()}</div>
+
+            {chart()}
 
             <Show when={cur() === "done"}>
               <div class="dl">
@@ -188,6 +395,10 @@ export default function App() {
                 <button onClick={retry}>Retry →</button>
               </div>
             </Show>
+
+            <div class="reset-row">
+              <button class="reset" onClick={reset}>Start new</button>
+            </div>
           </section>
         </Show>
       </Show>
