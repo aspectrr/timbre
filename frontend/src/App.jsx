@@ -109,12 +109,18 @@ export default function App() {
   // a file with the same name as a prior pick is a no-op — value unchanged).
   // macOS Mail exports .mbox as a *bundle directory* (Finder shows one icon,
   // but it's a folder). The file picker can't select a directory, so it fires
-  // The drop-zone click opens a FOLDER picker (webkitdirectory): it handles
-  // macOS Mail .mbox bundles AND any folder of writing files, since we filter
-  // by extension after. The bare inner `mbox` is renamed to `<bundle>.mbox`.
-  // A lone flat file (e.g. a Takeout .mbox in Downloads) can't be selected
-  // here — drag-and-drop it instead (drag handles both files and folders).
-  const onPick = (e) => {
+  // Two click paths: a FILE picker (flat .mbox/.eml/.txt/.md — e.g. a Google
+  // Takeout export) and a FOLDER picker (macOS Mail .mbox bundles). A native
+  // dialog can't mix files and folders, so the standard fix is two pickers.
+  // Drag-and-drop (onDrop) accepts both in one motion.
+  const onPickFiles = (e) => {
+    const picked = Array.from(e.target.files)
+      .filter((f) => isAccepted(f.name));
+    setPickHint(picked.length ? "" : "Choose .mbox, .eml, .txt, or .md files.");
+    if (picked.length) setFiles((p) => [...p, ...picked]);
+    e.target.value = "";
+  };
+  const onPickFolder = (e) => {
     const picked = Array.from(e.target.files);
     const resolved = picked
       .map((f) => _resolveFile(f, f.webkitRelativePath || f.name))
@@ -321,15 +327,22 @@ export default function App() {
             </select>
           </div>
           <div class="field">
-            <label>Your writing files (.mbox, .eml, .txt, .md)</label>
+            <label>Your writing (.mbox, .eml, .txt, .md)</label>
             <div class={`drop ${dragging() ? "over" : ""}`}
-              onClick={() => document.getElementById("file").click()}
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
               onDrop={onDrop}>
-              Drop files or a mailbox folder here, or click to choose a folder
-              <input id="file" type="file" webkitdirectory directory multiple hidden
-                onChange={onPick} />
+              Drag a file or a mailbox folder here
+              <div class="pick">
+                <button type="button" class="pick-btn"
+                  onClick={(e) => { e.stopPropagation(); document.getElementById("file").click(); }}>Choose files</button>
+                <button type="button" class="pick-btn"
+                  onClick={(e) => { e.stopPropagation(); document.getElementById("folder").click(); }}>Choose folder</button>
+              </div>
+              <input id="file" type="file" multiple hidden
+                accept=".mbox,.eml,.txt,.md" onChange={onPickFiles} />
+              <input id="folder" type="file" webkitdirectory directory multiple hidden
+                onChange={onPickFolder} />
             </div>
             <div class="flist">
               {files().map((f, i) => (

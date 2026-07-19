@@ -157,6 +157,28 @@ select { -webkit-appearance: none; appearance: none; cursor: pointer; }
 }
 .drop:hover, .drop.over { background: var(--stone); }
 
+/* ── two pick buttons inside the drop zone (files | folder) ── */
+.pick {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 20px;
+}
+.pick-btn {
+  width: auto;
+  background: var(--bone);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  padding: 10px 18px;
+  font-size: var(--text-caption);
+  letter-spacing: -0.8px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.pick-btn:hover { background: var(--ink); color: var(--bone); opacity: 1; }
+
 /* ── spinner + training button ── */
 .train-btn {
   display: flex;
