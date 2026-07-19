@@ -1,0 +1,26 @@
+# Fly config for the Timbre frontend (static SPA via Caddy).
+# Deploy: cd frontend && fly deploy
+# Custom domain: fly certs add timbre.collinpfeifer.dev -a timbre-web
+app = "timbre-web"
+primary_region = "iad"   # co-located with the backend (style-clone-backend)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  auto_stop_machines = true
+  auto_start_machines = true
+  # min_machines_running = 1  # set to 1 to avoid cold-start on first page load
+
+[http_service.concurrency]
+  type = "requests"
+  hard_limit = 250
+  soft_limit = 100
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+  [http_service.checks.http]
+    path = "/"

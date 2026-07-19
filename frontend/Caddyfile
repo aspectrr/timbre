@@ -1,0 +1,7 @@
+# Caddy serves the built SPA. Fly proxy handles TLS + the public hostname,
+# so we listen plain HTTP on the internal port (matches fly.toml internal_port).
+:8080 {
+	root * /srv
+	try_files {path} /index.html
+	file_server
+}
