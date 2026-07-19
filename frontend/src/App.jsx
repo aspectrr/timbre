@@ -37,6 +37,7 @@ export default function App() {
   // response, so one Fly cold-start 503 = Guide tab.
   const [conn, setConn] = createSignal("ok");
   const [submitErr, setSubmitErr] = createSignal("");
+  const [pickHint, setPickHint] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   // loss history for the live chart — persisted to localStorage so a refresh
   // rebuilds the full curve, not just points after the reload.
@@ -51,8 +52,18 @@ export default function App() {
   // append — a second pick/drop adds to the list, doesn't wipe the first.
   // reset the input value after so onChange always fires (without this, picking
   // a file with the same name as a prior pick is a no-op — value unchanged).
+  // macOS Mail exports .mbox as a *bundle directory* (Finder shows one icon,
+  // but it's a folder). The file picker can't select a directory, so it fires
+  // onChange with an empty FileList → nothing loads. Catch that and explain.
   const onPick = (e) => {
-    setFiles((p) => [...p, ...Array.from(e.target.files)]);
+    const picked = Array.from(e.target.files);
+    if (!picked.length) {
+      setPickHint("That looks like a macOS Mail folder (.mbox bundle), not a "
+        + "file. Pick the flat .mbox file inside it, or export as Standard mbox.");
+      return;
+    }
+    setPickHint("");
+    setFiles((p) => [...p, ...picked]);
     e.target.value = "";
   };
   const onDrop = (e) => {
@@ -256,6 +267,9 @@ export default function App() {
                 </span>
               ))}
             </div>
+            <Show when={pickHint()}>
+              <div class="errbox" style={{ "margin-top": "16px" }}>{pickHint()}</div>
+            </Show>
           </div>
           <button disabled={busy()} onClick={submit}>
             {busy() ? "Starting" : "Train →"}
