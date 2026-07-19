@@ -22,6 +22,52 @@ const LABELS = {
   queued: "Queued", error: "Error",
 };
 
+const ACCEPTED = [".mbox", ".eml", ".txt", ".md"];
+const isAccepted = (name) =>
+  ACCEPTED.some((ext) => name.toLowerCase().endsWith(ext));
+
+// ── drag-and-drop folder/bundle traversal ────────────────────────────────
+// A macOS Mail export is a `.mbox` *bundle directory* (Finder shows one icon).
+// The file picker can't select a folder, but a DROP can read into it via the
+// FileSystem Entry API. We walk any dropped folder, pull out the accepted
+// files, and rename the inner `mbox` data file to `<bundle>.mbox` so the
+// backend (which routes by extension) parses it. Seamless: drop the bundle,
+// it just works.
+//
+// ponytail: webkitGetAsEntry only — covers Chrome/Edge/Safari/Firefox.
+// No fallback path; the click picker handles browsers without it.
+const _readEntries = (reader) => new Promise((resolve) => {
+  const out = []; // readEntries returns in batches — loop until empty
+  const step = () => reader.readEntries((batch) =>
+    batch.length ? (out.push(...batch), step()) : resolve(out));
+  step();
+});
+const _entryFile = (entry) => new Promise((res) => entry.file(res));
+
+async function _walk(entry, dirPath = "") {
+  if (entry.isFile) {
+    const file = await _entryFile(entry);
+    let name = file.name;
+    // macOS bundle: the data file is literally named `mbox` (no extension).
+    // rename to the bundle dir name so the backend ingests it.
+    if (name.toLowerCase() === "mbox" && dirPath) {
+      const dir = dirPath.split("/")[0];
+      name = dir.toLowerCase().endsWith(".mbox") ? dir : `${dir}.mbox`;
+    }
+    return isAccepted(name)
+      ? [name === file.name ? file : new File([file], name, { type: file.type })]
+      : [];
+  }
+  if (entry.isDirectory) {
+    const here = dirPath ? `${dirPath}/${entry.name}` : entry.name;
+    const sub = await _readEntries(entry.createReader());
+    const out = [];
+    for (const e of sub) out.push(...(await _walk(e, here)));
+    return out;
+  }
+  return [];
+}
+
 export default function App() {
   const [author, setAuthor] = createSignal("");
   const [synth, setSynth] = createSignal("anthropic/claude-opus-4.8");
@@ -58,8 +104,10 @@ export default function App() {
   const onPick = (e) => {
     const picked = Array.from(e.target.files);
     if (!picked.length) {
-      setPickHint("That looks like a macOS Mail folder (.mbox bundle), not a "
-        + "file. Pick the flat .mbox file inside it, or export as Standard mbox.");
+      // A click-select that returns nothing usually means a macOS Mail
+      // folder was picked — the picker can't grab a folder. Nudge to drag,
+      // which CAN read into it. Kept short: no internals, just the action.
+      setPickHint("Try dragging that onto the drop zone instead.");
       return;
     }
     setPickHint("");
@@ -68,7 +116,20 @@ export default function App() {
   };
   const onDrop = (e) => {
     e.preventDefault(); setDragging(false);
-    setFiles((p) => [...p, ...e.dataTransfer.files]);
+    // Capture entries SYNCHRONOUSLY — the DataTransferItemList is invalidated
+    // once the handler awaits. Then walk async.
+    const entries = [...(e.dataTransfer?.items ?? [])]
+      .filter((it) => it.kind === "file")
+      .map((it) => it.webkitGetAsEntry?.())
+      .filter(Boolean);
+    if (entries.length) {
+      (async () => {
+        const files = (await Promise.all(entries.map(_walk))).flat();
+        if (files.length) setFiles((p) => [...p, ...files]);
+      })();
+    } else if (e.dataTransfer?.files?.length) {
+      setFiles((p) => [...p, ...Array.from(e.dataTransfer.files)]);
+    }
   };
 
   const submit = async () => {
@@ -256,7 +317,7 @@ export default function App() {
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
               onDrop={onDrop}>
-              Drop files here or click to choose
+              Drop files or a mailbox folder here, or click to choose
               <input id="file" type="file" multiple hidden
                 accept=".mbox,.eml,.txt,.md" onChange={onPick} />
             </div>
