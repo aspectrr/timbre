@@ -4,6 +4,9 @@
 
 # Data — contains PII (raw email, names, addresses). NEVER commit.
 # Raw exports (mbox, eml, etc.)
+# Also ignore stray mbox files at repo root (never commit raw email)
+*.mbox
+*.mbox/
 data/raw/
 # Cleaned but still-identifiable text
 data/cleaned/
