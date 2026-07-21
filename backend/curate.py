@@ -43,6 +43,10 @@ DROP a sample if it is:
     notifications, delivery updates, out-of-office auto-replies)
   - form letters, legal disclaimers, signatures, or boilerplate-only fragments
   - too short or generic to carry personal style ("ok thanks!", "see you then")
+  - pasted articles, blog posts, or web pages they copied in (not their words)
+  - rough drafts, outlines, or templates full of placeholders/section stubs
+  - raw meeting transcripts, chat logs, or exported logs (not authored prose)
+  - system docs, READMEs, spec/reference text, or generated boilerplate
 
 Samples:
 __SAMPLES__

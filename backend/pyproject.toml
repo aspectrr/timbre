@@ -9,6 +9,11 @@ dependencies = [
     "python-multipart>=0.0.9",
     "dbos>=2.27",
     "modal>=1.5",
+    "python-docx>=1.1",
+    "pymupdf>=1.24",
 ]
+
+[dependency-groups]
+dev = ["pytest>=8"]
 # No [build-system]: this is an application, not a library. uv manages the
 # venv and the package is found on the working directory at runtime.

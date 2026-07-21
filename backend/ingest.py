@@ -3,6 +3,8 @@
 Supports:
   .mbox / .eml  — email, author-filtered (keep only target addresses)
   .txt / .md    — free-form writing (treated as the author's own words)
+  .docx         — Word docs (python-docx, paragraphs joined)
+  .pdf          — PDF text (pymupdf/fitz, page text joined)
 
 Cleaning logic ported from scripts/clean_mbox.py (quote/signature/boilerplate
 stripping, position-aware boilerplate detection). Generalized so author
@@ -163,6 +165,51 @@ def _build_boilerplate(records: list[dict]) -> set[str]:
     return bp
 
 
+# ── markdown / Obsidian cleanup ────────────────────────────────────────────
+# Cheap regex passes on .md/.txt *before* _chunk_text. Drops structural noise
+# (frontmatter, wikilinks, embeds, link URLs, tags, callout markers) but keeps
+# the prose. PDFs/DOCX skip this — they carry no markdown syntax.
+_YAML_FRONTMATTER = re.compile(r"\A---\n.*?\n---\n", re.DOTALL)
+_WIKILINK_EMBED = re.compile(r"!\[\[[^\]]*\]\]")      # ![[note.png]] / ![[x]]
+_IMAGE_MD = re.compile(r"!\[[^\]]*\]\([^)]*\)")      # ![alt](url)
+_WIKILINK_PIPE = re.compile(r"\[\[[^\]]*\|([^\]]*)\]\]")  # [[a|b]] -> b
+_WIKILINK_PLAIN = re.compile(r"\[\[([^\]]*)\]\]")        # [[a]]   -> a
+_LINK_MD = re.compile(r"\[([^\]]*)\]\([^)]*\)")      # [t](u)  -> t
+_CALLOUT = re.compile(r"(?m)^>\s*\[![^\]]*\]\s*")    # > [!note] -> ''
+# Conservative tag strip: only a #word not preceded by word/backtick/slash,
+# so foo#bar, path/#x, and `#code` are left alone.
+_TAG = re.compile(r"(?<![\w`/])#[\w/-]+")
+
+
+def _strip_markdown(text: str) -> str:
+    text = _YAML_FRONTMATTER.sub("", text, count=1)
+    text = _WIKILINK_EMBED.sub("", text)
+    text = _IMAGE_MD.sub("", text)
+    text = _WIKILINK_PIPE.sub(r"\1", text)
+    text = _WIKILINK_PLAIN.sub(r"\1", text)
+    text = _LINK_MD.sub(r"\1", text)
+    text = _CALLOUT.sub("", text)
+    text = _TAG.sub("", text)
+    return text
+
+
+# ── binary doc extractors ──────────────────────────────────────────────────
+def _extract_docx(path: Path) -> str:
+    # Lazy import: keeps `import ingest` light and the email-only path doc-free.
+    import docx  # python-docx
+    document = docx.Document(str(path))
+    return "\n".join(p.text for p in document.paragraphs if p.text.strip())
+
+
+def _extract_pdf(path: Path) -> str:
+    import fitz  # pymupdf
+    out = []
+    with fitz.open(str(path)) as doc:
+        for page in doc:
+            out.append(page.get_text("text"))
+    return "\n".join(out)
+
+
 # ── text/doc chunking ──────────────────────────────────────────────────────
 def _chunk_text(text: str, max_chars: int = 1800) -> list[str]:
     """Split a long free-form doc into paragraph-grouped chunks."""
@@ -203,9 +250,20 @@ def ingest(input_dir: Path, author_addresses: set[str]) -> list[dict]:
                 if body.strip():
                     email_records.append({"source": path.name, "_raw": body})
         elif suf in (".txt", ".md"):
-            raw = path.read_text(encoding="utf-8", errors="replace")
+            raw = _strip_markdown(
+                path.read_text(encoding="utf-8", errors="replace"))
             for chunk in _chunk_text(raw):
                 doc_samples.append({"source": path.name, "_raw": chunk})
+        elif suf == ".docx":
+            text = _extract_docx(path)
+            if text.strip():
+                for chunk in _chunk_text(text):
+                    doc_samples.append({"source": path.name, "_raw": chunk})
+        elif suf == ".pdf":
+            text = _extract_pdf(path)
+            if text.strip():
+                for chunk in _chunk_text(text):
+                    doc_samples.append({"source": path.name, "_raw": chunk})
 
     # Clean email records (boilerplate-aware) + dedup
     boilerplate = _build_boilerplate(email_records)
