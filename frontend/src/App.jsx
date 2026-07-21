@@ -22,7 +22,7 @@ const LABELS = {
   queued: "Queued", error: "Error",
 };
 
-const ACCEPTED = [".mbox", ".eml", ".txt", ".md"];
+const ACCEPTED = [".mbox", ".eml", ".txt", ".md", ".docx", ".pdf"];
 const isAccepted = (name) =>
   ACCEPTED.some((ext) => name.toLowerCase().endsWith(ext));
 
@@ -116,7 +116,7 @@ export default function App() {
   const onPickFiles = (e) => {
     const picked = Array.from(e.target.files)
       .filter((f) => isAccepted(f.name));
-    setPickHint(picked.length ? "" : "Choose .mbox, .eml, .txt, or .md files.");
+    setPickHint(picked.length ? "" : "Choose .mbox, .eml, .txt, .md, .docx, or .pdf files.");
     if (picked.length) setFiles((p) => [...p, ...picked]);
     e.target.value = "";
   };
@@ -126,7 +126,7 @@ export default function App() {
       .map((f) => _resolveFile(f, f.webkitRelativePath || f.name))
       .filter(Boolean);
     setPickHint(resolved.length ? ""
-      : "No writing files (.mbox, .eml, .txt, .md) found in that folder.");
+      : "No writing files (.mbox, .eml, .txt, .md, .docx, .pdf) found in that folder.");
     if (resolved.length) setFiles((p) => [...p, ...resolved]);
     e.target.value = "";
   };
@@ -314,7 +314,7 @@ export default function App() {
           <h2 class="section-title">New job</h2>
 
           <div class="field">
-            <label>Your email addresses</label>
+            <label>Your email addresses <span class="opt">(only needed for .mbox/.eml)</span></label>
             <textarea value={author()} onInput={(e) => setAuthor(e.target.value)}
               placeholder="youremailaddress1@gmail.com, youremail2@icloud.com" />
           </div>
@@ -327,7 +327,7 @@ export default function App() {
             </select>
           </div>
           <div class="field">
-            <label>Your writing (.mbox, .eml, .txt, .md)</label>
+            <label>Your writing (.mbox, .eml, .txt, .md, .docx, .pdf)</label>
             <div class={`drop ${dragging() ? "over" : ""}`}
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
@@ -340,7 +340,7 @@ export default function App() {
                   onClick={(e) => { e.stopPropagation(); document.getElementById("folder").click(); }}>Choose folder</button>
               </div>
               <input id="file" type="file" multiple hidden
-                accept=".mbox,.eml,.txt,.md" onChange={onPickFiles} />
+                accept=".mbox,.eml,.txt,.md,.docx,.pdf" onChange={onPickFiles} />
               <input id="folder" type="file" webkitdirectory directory multiple hidden
                 onChange={onPickFolder} />
             </div>
