@@ -50,7 +50,10 @@ function AgentSection() {
     catch (e) { setErr(e.message || "could not reach the server"); }
   };
 
-  const url = apiBase() + "/mcp";
+  // Trailing slash required: the streamable-HTTP transport establishes a
+  // session at /mcp/. Without it, /mcp 307-redirects to /mcp/ and the redirect
+  // leg drops the Authorization header, breaking auth on subsequent calls.
+  const url = apiBase() + "/mcp/";
   const k = () => key() || "<paste your key>";
 
   // per-client MCP configs (auto-filled when a key exists)
