@@ -1,6 +1,6 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import Guide from "./Guide.jsx";
-import { createJob, getStatus, resumeJob, downloadUrl } from "./api.js";
+import { createJob, getStatus, resumeJob, downloadFile, loadKey, mintKey } from "./api.js";
 
 // ponytail: one-slot localStorage — fine until a user needs a job history list.
 const JOB_KEY = "styleclone:job_id";
@@ -102,7 +102,17 @@ export default function App() {
     JSON.parse(localStorage.getItem(EVAL_KEY) || "[]"));
   let pollTimer;
 
-  onMount(() => { if (jobId()) poll(jobId()); });
+  // One-time API key reveal: minted on first visit, persisted to localStorage,
+  // shown once here. _fetch re-mints transparently if a saved key ever 401s.
+  const [revealedKey, setRevealedKey] = createSignal("");
+
+  onMount(async () => {
+    if (!loadKey()) {
+      try { setRevealedKey(await mintKey()); }
+      catch { /* network down — the first request will mint lazily on 401 */ }
+    }
+    if (jobId()) poll(jobId());
+  });
 
   // append — a second pick/drop adds to the list, doesn't wipe the first.
   // reset the input value after so onChange always fires (without this, picking
@@ -308,6 +318,13 @@ export default function App() {
       </Show>
 
       <Show when={tab() === "train"}>
+        <Show when={revealedKey()}>
+          <div class="key-reveal">
+            <span>Your API key — saved in this browser, shown once</span>
+            <code>{revealedKey()}</code>
+            <button type="button" onClick={() => setRevealedKey("")}>Dismiss</button>
+          </div>
+        </Show>
         <Show when={!jobId()}>
         <section style={{ "padding-top": "0" }}>
           <p class="label">Train</p>
@@ -384,8 +401,8 @@ export default function App() {
 
             <Show when={cur() === "done"}>
               <div class="dl">
-                <a href={downloadUrl(jobId(), "adapter.gguf")} download>↓ adapter.gguf</a>
-                <a href={downloadUrl(jobId(), "Modelfile")} download>↓ Modelfile</a>
+                <a href="#" onClick={(e) => { e.preventDefault(); downloadFile(jobId(), "adapter.gguf").catch(() => alert("Download failed.")); }}>↓ adapter.gguf</a>
+                <a href="#" onClick={(e) => { e.preventDefault(); downloadFile(jobId(), "Modelfile").catch(() => alert("Download failed.")); }}>↓ Modelfile</a>
               </div>
             </Show>
 

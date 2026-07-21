@@ -105,6 +105,15 @@ class _StubFile:
         return self._data
 
 
+class _FakeRequest:
+    """Stand-in for FastAPI Request — create_job reads only request.state.owner."""
+
+    def __init__(self):
+        import types
+        self.state = types.SimpleNamespace(owner="test-owner")
+        self.headers = {}
+
+
 def test_doc_only_without_author_ok(tmp_path, monkeypatch):
     # A plain-text doc never needs an author; create_job must accept it.
     monkeypatch.setattr(main, "DATA", tmp_path)
@@ -112,7 +121,7 @@ def test_doc_only_without_author_ok(tmp_path, monkeypatch):
     monkeypatch.setattr(main.status, "create_job", lambda *a, **k: None)
 
     f = _StubFile("writing.txt", b"some prose that needs no author filter at all.")
-    resp = asyncio.run(main.create_job(author="", files=[f]))
+    resp = asyncio.run(main.create_job(request=_FakeRequest(), author="", files=[f]))
     assert resp.status_code == 200
     assert "job_id" in json.loads(resp.body)
 
@@ -124,5 +133,5 @@ def test_email_without_author_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(main.status, "create_job", lambda *a, **k: None)
 
     f = _StubFile("inbox.mbox", b"From someone@example.com ...\n")
-    resp = asyncio.run(main.create_job(author="", files=[f]))
+    resp = asyncio.run(main.create_job(request=_FakeRequest(), author="", files=[f]))
     assert resp.status_code == 400
