@@ -1,6 +1,6 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import Guide from "./Guide.jsx";
-import { createJob, getStatus, resumeJob, downloadUrl } from "./api.js";
+import { createJob, getStatus, resumeJob, downloadFile, loadKey, mintKey, listJobs } from "./api.js";
 
 // ponytail: one-slot localStorage — fine until a user needs a job history list.
 const JOB_KEY = "styleclone:job_id";
@@ -22,7 +22,7 @@ const LABELS = {
   queued: "Queued", error: "Error",
 };
 
-const ACCEPTED = [".mbox", ".eml", ".txt", ".md"];
+const ACCEPTED = [".mbox", ".eml", ".txt", ".md", ".docx", ".pdf"];
 const isAccepted = (name) =>
   ACCEPTED.some((ext) => name.toLowerCase().endsWith(ext));
 
@@ -101,8 +101,52 @@ export default function App() {
   const [evalPts, setEvalPts] = createSignal(
     JSON.parse(localStorage.getItem(EVAL_KEY) || "[]"));
   let pollTimer;
+  let runTimer;
 
-  onMount(() => { if (jobId()) poll(jobId()); });
+  // One-time API key reveal: minted on first visit, persisted to localStorage,
+  // shown once here. _fetch re-mints transparently if a saved key ever 401s.
+  const [revealedKey, setRevealedKey] = createSignal("");
+
+  // An agent (sharing this browser's API key) may start a job out-of-band.
+  // If we have no tracked job, look for an active one under this key and adopt
+  // it so the user sees their agent's run here. watchForRuns keeps looking
+  // while idle, so a run started moments later pops in live.
+  const adoptActiveRun = async () => {
+    try {
+      const jobs = await listJobs();
+      const active = (jobs || []).find(
+        (j) => j.stage && j.stage !== "done" && j.stage !== "error");
+      if (active) {
+        localStorage.setItem(JOB_KEY, active.job_id);
+        setJobId(active.job_id);
+        poll(active.job_id);
+        return true;
+      }
+    } catch { /* transient — keep watching */ }
+    return false;
+  };
+
+  const watchForRuns = () => {
+    clearTimeout(runTimer);
+    runTimer = setTimeout(async () => {
+      if (jobId()) return;              // adopted/submitted — stop watching
+      if (!await adoptActiveRun()) watchForRuns();
+    }, 5000);
+  };
+
+  onMount(async () => {
+    if (!loadKey()) {
+      try { setRevealedKey(await mintKey()); }
+      catch { /* network down — the first request will mint lazily on 401 */ }
+    }
+    if (jobId()) {
+      poll(jobId());
+    } else if (await adoptActiveRun()) {
+      // adopted an agent-started run; poll already running
+    } else {
+      watchForRuns();
+    }
+  });
 
   // append — a second pick/drop adds to the list, doesn't wipe the first.
   // reset the input value after so onChange always fires (without this, picking
@@ -116,7 +160,7 @@ export default function App() {
   const onPickFiles = (e) => {
     const picked = Array.from(e.target.files)
       .filter((f) => isAccepted(f.name));
-    setPickHint(picked.length ? "" : "Choose .mbox, .eml, .txt, or .md files.");
+    setPickHint(picked.length ? "" : "Choose .mbox, .eml, .txt, .md, .docx, or .pdf files.");
     if (picked.length) setFiles((p) => [...p, ...picked]);
     e.target.value = "";
   };
@@ -126,7 +170,7 @@ export default function App() {
       .map((f) => _resolveFile(f, f.webkitRelativePath || f.name))
       .filter(Boolean);
     setPickHint(resolved.length ? ""
-      : "No writing files (.mbox, .eml, .txt, .md) found in that folder.");
+      : "No writing files (.mbox, .eml, .txt, .md, .docx, .pdf) found in that folder.");
     if (resolved.length) setFiles((p) => [...p, ...resolved]);
     e.target.value = "";
   };
@@ -161,6 +205,7 @@ export default function App() {
     }
     setBusy(false);
     if (j.error) { setSubmitErr(j.error); return; }
+    clearTimeout(runTimer);             // we have our own job now — stop watching
     localStorage.setItem(JOB_KEY, j.job_id);
     setJobId(j.job_id);
     setTab("train");
@@ -223,9 +268,10 @@ export default function App() {
     setLossPts([]);
     setEvalPts([]);
     setSubmitErr("");
+    watchForRuns();                     // cleared to start over — resume watching
   };
 
-  onCleanup(() => clearTimeout(pollTimer));
+  onCleanup(() => { clearTimeout(pollTimer); clearTimeout(runTimer); });
 
   const st = () => status() || {};
   const cur = () => st().stage;
@@ -308,13 +354,20 @@ export default function App() {
       </Show>
 
       <Show when={tab() === "train"}>
+        <Show when={revealedKey()}>
+          <div class="key-reveal">
+            <span>Your API key — saved in this browser, shown once</span>
+            <code>{revealedKey()}</code>
+            <button type="button" onClick={() => setRevealedKey("")}>Dismiss</button>
+          </div>
+        </Show>
         <Show when={!jobId()}>
         <section style={{ "padding-top": "0" }}>
           <p class="label">Train</p>
           <h2 class="section-title">New job</h2>
 
           <div class="field">
-            <label>Your email addresses</label>
+            <label>Your email addresses <span class="opt">(only needed for .mbox/.eml)</span></label>
             <textarea value={author()} onInput={(e) => setAuthor(e.target.value)}
               placeholder="youremailaddress1@gmail.com, youremail2@icloud.com" />
           </div>
@@ -327,7 +380,7 @@ export default function App() {
             </select>
           </div>
           <div class="field">
-            <label>Your writing (.mbox, .eml, .txt, .md)</label>
+            <label>Your writing (.mbox, .eml, .txt, .md, .docx, .pdf)</label>
             <div class={`drop ${dragging() ? "over" : ""}`}
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
@@ -340,7 +393,7 @@ export default function App() {
                   onClick={(e) => { e.stopPropagation(); document.getElementById("folder").click(); }}>Choose folder</button>
               </div>
               <input id="file" type="file" multiple hidden
-                accept=".mbox,.eml,.txt,.md" onChange={onPickFiles} />
+                accept=".mbox,.eml,.txt,.md,.docx,.pdf" onChange={onPickFiles} />
               <input id="folder" type="file" webkitdirectory directory multiple hidden
                 onChange={onPickFolder} />
             </div>
@@ -384,8 +437,8 @@ export default function App() {
 
             <Show when={cur() === "done"}>
               <div class="dl">
-                <a href={downloadUrl(jobId(), "adapter.gguf")} download>↓ adapter.gguf</a>
-                <a href={downloadUrl(jobId(), "Modelfile")} download>↓ Modelfile</a>
+                <a href="#" onClick={(e) => { e.preventDefault(); downloadFile(jobId(), "adapter.gguf").catch(() => alert("Download failed.")); }}>↓ adapter.gguf</a>
+                <a href="#" onClick={(e) => { e.preventDefault(); downloadFile(jobId(), "Modelfile").catch(() => alert("Download failed.")); }}>↓ Modelfile</a>
               </div>
             </Show>
 

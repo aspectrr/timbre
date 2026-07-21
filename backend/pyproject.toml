@@ -9,6 +9,20 @@ dependencies = [
     "python-multipart>=0.0.9",
     "dbos>=2.27",
     "modal>=1.5",
+    "fastmcp>=2.3",
+    "python-docx>=1.1",
+    "pymupdf>=1.24",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+# test_status.py is a standalone self-check script (runs at import, rmtree's
+# its own dir); keep it out of the pytest collection.
+addopts = "--ignore=test_status.py"
 # No [build-system]: this is an application, not a library. uv manages the
 # venv and the package is found on the working directory at runtime.
