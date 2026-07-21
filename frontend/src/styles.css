@@ -381,7 +381,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 }
 
 /* ── one-time API-key reveal ── */
-.key-reveal {
+.key-reveal, .agent-panel {
   border: 1px solid var(--ink);
   border-radius: 0;
   padding: 18px 20px;
@@ -390,6 +390,8 @@ button:disabled { opacity: 0.4; cursor: default; }
   flex-direction: column;
   gap: 8px;
 }
+.agent-panel { padding: 28px 32px; }
+.agent-panel .key-reveal { margin: 0; }
 .key-reveal span {
   font-size: var(--text-caption);
   text-transform: uppercase;

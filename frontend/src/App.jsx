@@ -1,6 +1,6 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import Guide from "./Guide.jsx";
-import { createJob, getStatus, resumeJob, downloadFile, loadKey, mintKey } from "./api.js";
+import { createJob, getStatus, resumeJob, downloadFile, loadKey, mintKey, listJobs } from "./api.js";
 
 // ponytail: one-slot localStorage — fine until a user needs a job history list.
 const JOB_KEY = "styleclone:job_id";
@@ -101,17 +101,51 @@ export default function App() {
   const [evalPts, setEvalPts] = createSignal(
     JSON.parse(localStorage.getItem(EVAL_KEY) || "[]"));
   let pollTimer;
+  let runTimer;
 
   // One-time API key reveal: minted on first visit, persisted to localStorage,
   // shown once here. _fetch re-mints transparently if a saved key ever 401s.
   const [revealedKey, setRevealedKey] = createSignal("");
+
+  // An agent (sharing this browser's API key) may start a job out-of-band.
+  // If we have no tracked job, look for an active one under this key and adopt
+  // it so the user sees their agent's run here. watchForRuns keeps looking
+  // while idle, so a run started moments later pops in live.
+  const adoptActiveRun = async () => {
+    try {
+      const jobs = await listJobs();
+      const active = (jobs || []).find(
+        (j) => j.stage && j.stage !== "done" && j.stage !== "error");
+      if (active) {
+        localStorage.setItem(JOB_KEY, active.job_id);
+        setJobId(active.job_id);
+        poll(active.job_id);
+        return true;
+      }
+    } catch { /* transient — keep watching */ }
+    return false;
+  };
+
+  const watchForRuns = () => {
+    clearTimeout(runTimer);
+    runTimer = setTimeout(async () => {
+      if (jobId()) return;              // adopted/submitted — stop watching
+      if (!await adoptActiveRun()) watchForRuns();
+    }, 5000);
+  };
 
   onMount(async () => {
     if (!loadKey()) {
       try { setRevealedKey(await mintKey()); }
       catch { /* network down — the first request will mint lazily on 401 */ }
     }
-    if (jobId()) poll(jobId());
+    if (jobId()) {
+      poll(jobId());
+    } else if (await adoptActiveRun()) {
+      // adopted an agent-started run; poll already running
+    } else {
+      watchForRuns();
+    }
   });
 
   // append — a second pick/drop adds to the list, doesn't wipe the first.
@@ -171,6 +205,7 @@ export default function App() {
     }
     setBusy(false);
     if (j.error) { setSubmitErr(j.error); return; }
+    clearTimeout(runTimer);             // we have our own job now — stop watching
     localStorage.setItem(JOB_KEY, j.job_id);
     setJobId(j.job_id);
     setTab("train");
@@ -233,9 +268,10 @@ export default function App() {
     setLossPts([]);
     setEvalPts([]);
     setSubmitErr("");
+    watchForRuns();                     // cleared to start over — resume watching
   };
 
-  onCleanup(() => clearTimeout(pollTimer));
+  onCleanup(() => { clearTimeout(pollTimer); clearTimeout(runTimer); });
 
   const st = () => status() || {};
   const cur = () => st().stage;

@@ -1,5 +1,6 @@
 // API base: set VITE_API_URL at build time (Render static), or empty for dev proxy.
-const BASE = import.meta.env.VITE_API_URL || "";
+export const apiBase = () => import.meta.env.VITE_API_URL || "";
+const BASE = apiBase();
 
 const API_KEY = "styleclone:api_key";
 
