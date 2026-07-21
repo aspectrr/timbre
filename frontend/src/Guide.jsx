@@ -25,6 +25,17 @@ function Cmd(props) {
   );
 }
 
+// a config block with a label + copyable content, rendered like .cmd but
+// allowing multi-line (pre) content for JSON/TOML configs.
+function ConfigBlock(props) {
+  return (
+    <div class="cmd" style={{ "align-items": "flex-start" }}>
+      <pre style={{ margin: "0", "white-space": "pre-wrap", "word-break": "break-all", font: "inherit" }}><code>{props.text}</code></pre>
+      <CopyBtn text={props.text} />
+    </div>
+  );
+}
+
 // ── agent path: key + MCP config + skill install ─────────────────────────
 // The key is auto-minted on first visit (App onMount) and lives in localStorage.
 // The agent gets the SAME key (pasted into its MCP config), so jobs it starts
@@ -39,16 +50,33 @@ function AgentSection() {
     catch (e) { setErr(e.message || "could not reach the server"); }
   };
 
-  // MCP config (pi / Agent Skills HTTP transport). The server is streamable-HTTP
-  // at <base>/mcp; auth is a bearer token = the user's API key.
-  const mcpUrl = apiBase() + "/mcp";
-  const mcpConfig = key()
-    ? JSON.stringify({
-        mcpServers: {
-          timbre: { url: mcpUrl, auth: "bearer", bearerToken: key() },
-        },
-      }, null, 2)
-    : "{\n  \"mcpServers\": {\n    \"timbre\": {\n      \"url\": \"" + mcpUrl + "\",\n      \"auth\": \"bearer\",\n      \"bearerToken\": \"<paste your key>\"\n    }\n  }\n}";
+  const url = apiBase() + "/mcp";
+  const k = () => key() || "<paste your key>";
+
+  // per-client MCP configs (auto-filled when a key exists)
+  const piConfig = JSON.stringify({
+    mcpServers: { timbre: { url, auth: "bearer", bearerToken: k() } },
+  }, null, 2);
+
+  const claudeDesktopConfig = JSON.stringify({
+    mcpServers: { timbre: { type: "http", url, headers: { Authorization: `Bearer ${k()}` } } },
+  }, null, 2);
+
+  const codexConfig =
+    `[mcp_servers.timbre]\n` +
+    `url = "${url}"\n` +
+    `bearer_token_env_var = "TIMBRE_API_KEY"`;
+
+  const opencodeConfig = JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    mcp: { timbre: { type: "remote", url, enabled: true, headers: { Authorization: `Bearer ${k()}` } } },
+  }, null, 2);
+
+  // Claude Code is a one-liner CLI command (shown open); the rest are config files.
+  const claudeCodeCmd = `claude mcp add --transport http timbre ${url} \\\n  --header "Authorization: Bearer ${k()}"`;
+
+  // skill install via npx skills from the GitHub repo
+  const skillsCmd = "npx skills add aspectrr/timbre --skill timbre -g -y";
 
   return (
     <div class="agent-panel">
@@ -78,30 +106,77 @@ function AgentSection() {
       </div>
 
       <div class="field">
-        <label>2 · Add the server to your agent</label>
+        <label>2 · Connect your agent's MCP server</label>
         <p class="body-text" style={{ "font-size": "var(--text-caption)", "max-width": "100%" }}>
-          Paste this into your agent's MCP client config
-          (<code>~/.pi/agent/mcp.json</code> for pi, or your client's equivalent).
-          Works with any MCP-compatible client.
+          Claude Code is shown by default. Others are below it.
         </p>
-        <div class="cmd" style={{ "align-items": "flex-start" }}>
-          <pre style={{ margin: "0", "white-space": "pre-wrap", "word-break": "break-all", font: "inherit" }}><code>{mcpConfig}</code></pre>
-          <CopyBtn text={mcpConfig} />
-        </div>
+
+        <details open>
+          <summary>Claude Code</summary>
+          <div class="inner">
+            <p class="body-text" style={{ "font-size": "var(--text-caption)", "max-width": "100%" }}>
+              Run this in your terminal (Claude Code installs the server to your config):
+            </p>
+            <ConfigBlock text={claudeCodeCmd} />
+          </div>
+        </details>
+
+        <details>
+          <summary>pi</summary>
+          <div class="inner">
+            <p class="body-text" style={{ "font-size": "var(--text-caption)", "max-width": "100%" }}>
+              Add to <code>~/.pi/agent/mcp.json</code>:
+            </p>
+            <ConfigBlock text={piConfig} />
+          </div>
+        </details>
+
+        <details>
+          <summary>Claude Desktop</summary>
+          <div class="inner">
+            <p class="body-text" style={{ "font-size": "var(--text-caption)", "max-width": "100%" }}>
+              Add to <code>claude_desktop_config.json</code>
+              (Mac: <code>~/Library/Application&nbsp;Support/Claude/</code>;
+              Windows: <code>%APPDATA%\Claude\</code>):
+            </p>
+            <ConfigBlock text={claudeDesktopConfig} />
+          </div>
+        </details>
+
+        <details>
+          <summary>Codex</summary>
+          <div class="inner">
+            <p class="body-text" style={{ "font-size": "var(--text-caption)", "max-width": "100%" }}>
+              Add to <code>~/.codex/config.toml</code>, then put your key in an env var:
+            </p>
+            <ConfigBlock text={codexConfig} />
+            <Cmd text={`export TIMBRE_API_KEY="${k()}"`} />
+          </div>
+        </details>
+
+        <details>
+          <summary>OpenCode</summary>
+          <div class="inner">
+            <p class="body-text" style={{ "font-size": "var(--text-caption)", "max-width": "100%" }}>
+              Add to <code>opencode.json</code>:
+            </p>
+            <ConfigBlock text={opencodeConfig} />
+          </div>
+        </details>
       </div>
 
       <div class="field">
         <label>3 · Install the skill</label>
         <p class="body-text" style={{ "font-size": "var(--text-caption)", "max-width": "100%" }}>
-          Save the skill so your agent knows how to run a Timbre job. For pi:
+          The <a href="https://github.com/aspectrr/timbre/blob/main/skills/timbre/SKILL.md" target="_blank">Timbre skill</a> teaches your agent how to run a job.
+          Install it from the repo with the skills CLI (auto-detects your agent;
+          add <code>-a claude-code</code>, <code>-a codex</code>, or <code>-a opencode</code> to target one):
         </p>
-        <Cmd text="mkdir -p ~/.pi/agent/skills/timbre" />
+        <Cmd text={skillsCmd} />
         <p class="body-text" style={{ "font-size": "var(--text-caption)", "max-width": "100%", "margin-top": "12px" }}>
-          Then grab <code>SKILL.md</code> from the{" "}
-          <a href="https://github.com/aspectrr/timbre/blob/main/skills/timbre/SKILL.md" target="_blank">timbre repo</a>{" "}
-          and drop it in that folder. (Other agents: the skill follows the{" "}
-          <a href="https://agentskills.io" target="_blank">Agent Skills standard</a>{" "}
-          — point your harness at the directory.)
+          No CLI? <a href="https://agentskills.io" target="_blank">Agent Skills</a> is an open
+          standard — drop <code>SKILL.md</code> into your agent's skills folder
+          (<code>~/.claude/skills/timbre/</code>, <code>~/.codex/skills/timbre/</code>, etc.).
         </p>
       </div>
 
