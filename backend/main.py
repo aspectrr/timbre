@@ -55,7 +55,7 @@ def health() -> dict:
 
 @app.post("/api/jobs")
 async def create_job(
-    author: str = Form(...),
+    author: str = Form(""),
     synth_model: str = Form("anthropic/claude-opus-4.8"),
     files: list[UploadFile] = File(...),
 ) -> JSONResponse:
@@ -72,6 +72,14 @@ async def create_job(
         return JSONResponse({"error": "no files uploaded"}, status_code=400)
 
     addrs = [a.strip() for a in author.replace("\n", ",").split(",") if a.strip()]
+    # Email files need an author address to filter sent mail; plain docs never do.
+    if any(Path(f.filename or "").suffix.lower() in (".mbox", ".eml")
+           for f in files if f.filename) and not addrs:
+        return JSONResponse(
+            {"error": "Email files (.mbox/.eml) need your email address "
+                      "to filter sent mail."},
+            status_code=400)
+
     status.create_job(job_id, addrs, synth_model, "llama3.2-3b", saved)
     start_job(job_id, addrs, synth_model)
     return JSONResponse({"job_id": job_id})
