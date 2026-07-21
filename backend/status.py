@@ -39,8 +39,15 @@ CREATE TABLE IF NOT EXISTS jobs (
     eval_loss     REAL,
     adapter_mb    REAL,
     error         TEXT,
+    owner         TEXT,                  -- sha256 of the creator's API key
     created_at    REAL,
     updated_at    REAL
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    key_hash      TEXT PRIMARY KEY,      -- sha256 hex of the plaintext key
+    label         TEXT,
+    created_at    REAL
 );
 """
 
@@ -62,19 +69,22 @@ def init_db() -> None:
         cols = {r[1] for r in c.execute("PRAGMA table_info(jobs)")}
         if "train_step" not in cols:
             c.execute("ALTER TABLE jobs ADD COLUMN train_step INTEGER")
+        if "owner" not in cols:
+            c.execute("ALTER TABLE jobs ADD COLUMN owner TEXT")
 
 
 def create_job(job_id: str, author: list[str], synth_model: str,
-               base_model: str, n_files: int, workflow_id: str = None) -> None:
+               base_model: str, n_files: int, workflow_id: str = None,
+               owner_key_hash: str = None) -> None:
     now = time.time()
     with _connect() as c:
         c.execute(
             "INSERT OR REPLACE INTO jobs "
             "(job_id, stage, message, progress_pct, author, synth_model, "
-            " base_model, n_files, workflow_id, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " base_model, n_files, workflow_id, owner, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (job_id, "queued", "starting...", 0, json.dumps(author),
-             synth_model, base_model, n_files, workflow_id, now, now))
+             synth_model, base_model, n_files, workflow_id, owner_key_hash, now, now))
 
 
 def update_job(job_id: str, **fields) -> None:
@@ -95,3 +105,46 @@ def get_job(job_id: str) -> dict | None:
     d = dict(row)
     d["author"] = json.loads(d["author"]) if d.get("author") else []
     return d
+
+
+def list_jobs(owner_key_hash: str) -> list[dict]:
+    """All jobs owned by a key (newest first)."""
+    with _connect() as c:
+        rows = c.execute(
+            "SELECT * FROM jobs WHERE owner = ? ORDER BY created_at DESC",
+            (owner_key_hash,)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["author"] = json.loads(d["author"]) if d.get("author") else []
+        out.append(d)
+    return out
+
+
+def count_active_jobs(owner_key_hash: str) -> int:
+    """Jobs for this key not in a terminal stage (done/error)."""
+    with _connect() as c:
+        row = c.execute(
+            "SELECT COUNT(*) FROM jobs "
+            "WHERE owner = ? AND stage NOT IN ('done', 'error')",
+            (owner_key_hash,)).fetchone()
+    return row[0]
+
+
+# ── API keys ──────────────────────────────────────────────────────────────
+
+def create_key(key_hash: str, label: str | None) -> dict:
+    now = time.time()
+    with _connect() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO api_keys (key_hash, label, created_at) "
+            "VALUES (?,?,?)",
+            (key_hash, label, now))
+    return {"key_hash": key_hash, "label": label, "created_at": now}
+
+
+def lookup_key(key_hash: str) -> dict | None:
+    with _connect() as c:
+        row = c.execute(
+            "SELECT * FROM api_keys WHERE key_hash = ?", (key_hash,)).fetchone()
+    return dict(row) if row else None

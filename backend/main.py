@@ -13,15 +13,25 @@ import uuid
 from pathlib import Path
 
 from dbos import DBOS, DBOSConfig
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
 
 import status
 import pipeline  # noqa: registers @DBOS.step / @DBOS.workflow
 from pipeline import start_job
+import mcp_server
+import auth
+from auth import verify_key
 
 DATA = Path(os.environ.get("DATA_DIR", "/data"))
+# Per-key concurrent active-job cap (active = any stage except done/error).
+MAX_ACTIVE_JOBS_PER_KEY = int(os.environ.get("MAX_ACTIVE_JOBS_PER_KEY", "1"))
+
+
+class KeyCreate(BaseModel):
+    label: str | None = None
 
 
 def _setup_dbos() -> None:
@@ -40,7 +50,10 @@ _setup_dbos()
 status.init_db()
 DBOS.launch()  # starts workflow executor + recovers pending workflows
 
-app = FastAPI(title="Style Clone")
+# FastMCP streamable-HTTP app: built with path="/" and mounted at /mcp below.
+# Its lifespan must be passed to FastAPI so MCP session management works.
+_mcp_http = mcp_server.mcp.http_app(path="/")
+app = FastAPI(title="Style Clone", lifespan=_mcp_http.lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get("CORS_ORIGIN", "*").split(","),
@@ -48,13 +61,19 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(auth.UnauthorizedError)
+async def _unauthorized(request, exc):
+    return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+
 @app.get("/health")
 def health() -> dict:
     return {"ok": True}
 
 
-@app.post("/api/jobs")
+@app.post("/api/jobs", dependencies=[Depends(verify_key)])
 async def create_job(
+    request: Request,
     author: str = Form(...),
     synth_model: str = Form("anthropic/claude-opus-4.8"),
     files: list[UploadFile] = File(...),
@@ -72,23 +91,32 @@ async def create_job(
         return JSONResponse({"error": "no files uploaded"}, status_code=400)
 
     addrs = [a.strip() for a in author.replace("\n", ",").split(",") if a.strip()]
-    status.create_job(job_id, addrs, synth_model, "llama3.2-3b", saved)
+    owner = request.state.owner
+    if status.count_active_jobs(owner) >= MAX_ACTIVE_JOBS_PER_KEY:
+        return JSONResponse({"error": "job already running"}, status_code=409)
+    status.create_job(job_id, addrs, synth_model, "llama3.2-3b", saved,
+                      owner_key_hash=owner)
     start_job(job_id, addrs, synth_model)
     return JSONResponse({"job_id": job_id})
 
 
-@app.get("/api/jobs/{job_id}")
-def job_status(job_id: str) -> JSONResponse:
+@app.get("/api/jobs", dependencies=[Depends(verify_key)])
+def list_jobs_route(request: Request) -> JSONResponse:
+    return JSONResponse(status.list_jobs(request.state.owner))
+
+
+@app.get("/api/jobs/{job_id}", dependencies=[Depends(verify_key)])
+def job_status(job_id: str, request: Request) -> JSONResponse:
     st = status.get_job(job_id)
-    if not st:
+    if not st or st.get("owner") != request.state.owner:
         return JSONResponse({"error": "not found"}, status_code=404)
     return JSONResponse(st)
 
 
-@app.post("/api/jobs/{job_id}/resume")
-def resume(job_id: str) -> JSONResponse:
+@app.post("/api/jobs/{job_id}/resume", dependencies=[Depends(verify_key)])
+def resume(job_id: str, request: Request) -> JSONResponse:
     st = status.get_job(job_id)
-    if not st:
+    if not st or st.get("owner") != request.state.owner:
         return JSONResponse({"error": "not found"}, status_code=404)
     if st["stage"] == "done":
         return JSONResponse({"ok": True, "message": "already done"})
@@ -98,8 +126,12 @@ def resume(job_id: str) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-@app.get("/api/jobs/{job_id}/download/{which}")
-def download(job_id: str, which: str) -> Response:
+@app.get("/api/jobs/{job_id}/download/{which}",
+         dependencies=[Depends(verify_key)])
+def download(job_id: str, which: str, request: Request) -> Response:
+    st = status.get_job(job_id)
+    if not st or st.get("owner") != request.state.owner:
+        return JSONResponse({"error": "not found"}, status_code=404)
     if which not in ("adapter.gguf", "Modelfile"):
         return JSONResponse({"error": "bad file"}, status_code=400)
     path = DATA / "jobs" / job_id / which
@@ -108,6 +140,29 @@ def download(job_id: str, which: str) -> Response:
     media = "application/octet-stream" if which.endswith(".gguf") else "text/plain"
     return Response(path.read_bytes(), media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="{which}"'})
+
+
+# ── API keys ──────────────────────────────────────────────────────────────
+# POST /api/keys is the ONE unauthenticated route: it mints a key and returns
+# the plaintext exactly once. GET /api/keys is authed and never returns it.
+
+@app.post("/api/keys")
+def mint_key(body: KeyCreate) -> JSONResponse:
+    key, key_hash = auth.new_key()
+    status.create_key(key_hash, body.label)
+    return JSONResponse({"key": key, "label": body.label})
+
+
+@app.get("/api/keys", dependencies=[Depends(verify_key)])
+def list_keys(request: Request) -> JSONResponse:
+    row = status.lookup_key(request.state.owner)
+    keys = ([{"label": row["label"], "created_at": row["created_at"]}]
+            if row else [])
+    return JSONResponse(keys)
+
+
+# Hosted MCP server: tools reuse the same status/pipeline helpers + bearer key.
+app.mount("/mcp", _mcp_http)
 
 
 # uvicorn reference (for `uvicorn backend.main:asgi_app`)
